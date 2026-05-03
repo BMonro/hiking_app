@@ -1,0 +1,595 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:go_router/go_router.dart';
+import 'profile_screen.dart';
+
+class EditProfileScreen extends ConsumerStatefulWidget {
+  const EditProfileScreen({super.key});
+
+  @override
+  ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
+}
+
+class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
+  final _nameController = TextEditingController();
+  final _ageController = TextEditingController();
+  final _bioController = TextEditingController();
+  final _experienceController = TextEditingController();
+  final _preferredDurationController = TextEditingController();
+  final _healthConditionsController = TextEditingController();
+  String _fitnessLevel = 'beginner';
+  String? _preferredDifficulty;
+  bool _isSaving = false;
+  File? _selectedImage;
+  final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final userId = Supabase.instance.client.auth.currentUser!.id;
+    final data = await Supabase.instance.client
+        .from('profiles')
+        .select()
+        .eq('id', userId)
+        .maybeSingle();
+    if (data != null && mounted) {
+      setState(() {
+        _nameController.text = data['full_name'] ?? '';
+        _ageController.text = data['age']?.toString() ?? '';
+        _bioController.text = data['bio'] ?? '';
+        _fitnessLevel = data['fitness_level'] ?? 'beginner';
+        _experienceController.text = data['experience_count']?.toString() ?? '';
+        _preferredDifficulty = data['preferred_difficulty'] as String?;
+        _preferredDurationController.text =
+            data['preferred_duration_h']?.toString() ?? '';
+      });
+    }
+
+    final conditions = await Supabase.instance.client
+        .from('profile_health_conditions')
+        .select('condition')
+        .eq('user_id', userId);
+
+    if (mounted) {
+      final values = List<Map<String, dynamic>>.from(conditions)
+          .map((item) => item['condition']?.toString() ?? '')
+          .where((item) => item.isNotEmpty)
+          .toList();
+      _healthConditionsController.text = values.join(', ');
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _ageController.dispose();
+    _bioController.dispose();
+    _experienceController.dispose();
+    _preferredDurationController.dispose();
+    _healthConditionsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final pickedFile = await _picker.pickImage(source: source);
+      if (pickedFile != null) {
+        setState(() {
+          _selectedImage = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Помилка вибору фото: $e')),
+        );
+      }
+    }
+  }
+
+  void _showImagePickerOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Зробити фото'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Вибрати з галереї'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            if (_selectedImage != null)
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('Видалити фото',
+                    style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _selectedImage = null;
+                  });
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    setState(() => _isSaving = true);
+    try {
+      final userId = Supabase.instance.client.auth.currentUser!.id;
+
+      // Upload image if selected
+      String? avatarUrl;
+      if (_selectedImage != null) {
+        final fileName =
+            '$userId-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg';
+        await Supabase.instance.client.storage
+            .from('avatars')
+            .upload(fileName, _selectedImage!);
+
+        avatarUrl = Supabase.instance.client.storage
+            .from('avatars')
+            .getPublicUrl(fileName);
+      } else {
+        final existing = await Supabase.instance.client
+            .from('profiles')
+            .select('avatar_url')
+            .eq('id', userId)
+            .maybeSingle();
+        avatarUrl = existing?['avatar_url'] as String?;
+      }
+
+      await Supabase.instance.client.from('profiles').upsert({
+        'id': userId,
+        'full_name': _nameController.text.trim(),
+        'age': int.tryParse(_ageController.text),
+        'bio': _bioController.text.trim(),
+        'fitness_level': _fitnessLevel,
+        'experience_count': int.tryParse(_experienceController.text.trim()) ?? 0,
+        'preferred_difficulty': _preferredDifficulty,
+        'preferred_duration_h':
+            double.tryParse(_preferredDurationController.text.trim()),
+        'avatar_url': avatarUrl,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      final conditions = _healthConditionsController.text
+          .split(',')
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList();
+
+      await Supabase.instance.client
+          .from('profile_health_conditions')
+          .delete()
+          .eq('user_id', userId);
+
+      if (conditions.isNotEmpty) {
+        await Supabase.instance.client.from('profile_health_conditions').insert(
+              conditions
+                  .map(
+                    (condition) => {
+                      'user_id': userId,
+                      'condition': condition,
+                    },
+                  )
+                  .toList(),
+            );
+      }
+
+      ref.invalidate(profileProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Профіль збережено')),
+        );
+        GoRouter.of(context).go('/profile');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Помилка: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+    final name = _nameController.text.trim();
+    final initials = name.isNotEmpty
+        ? name.split(' ').map((e) => e[0]).take(2).join()
+        : (user?.email?[0].toUpperCase() ?? '?');
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Редагування профілю'),
+        actions: [
+          TextButton(
+            onPressed: _isSaving ? null : _save,
+            child: _isSaving
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Text(
+                    'Зберегти',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const SizedBox(height: 20),
+              // Profile Photo Section
+              Stack(
+                children: [
+                  CircleAvatar(
+                    radius: 60,
+                    backgroundColor: const Color(0xFF2E7D32),
+                    backgroundImage: _selectedImage != null
+                        ? FileImage(_selectedImage!)
+                        : null,
+                    child: _selectedImage == null
+                        ? Text(
+                            initials,
+                            style: const TextStyle(
+                              fontSize: 36,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          )
+                        : null,
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Material(
+                      color: const Color(0xFF2E7D32),
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: _showImagePickerOptions,
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(
+                            Icons.camera_alt,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+
+              // Form Fields
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Особиста інформація',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _nameController,
+                      decoration: _inputDecoration(
+                        'Ім\'я та прізвище',
+                        Icons.person_outline,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _ageController,
+                      keyboardType: TextInputType.number,
+                      decoration: _inputDecoration(
+                        'Вік',
+                        Icons.calendar_today,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _bioController,
+                      maxLines: 4,
+                      decoration: _inputDecoration(
+                        'Про себе',
+                        Icons.description,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _experienceController,
+                      keyboardType: TextInputType.number,
+                      decoration: _inputDecoration(
+                        'Кількість попередніх походів',
+                        Icons.hiking_outlined,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _preferredDurationController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: _inputDecoration(
+                        'Бажана тривалість (год)',
+                        Icons.timelapse_outlined,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _healthConditionsController,
+                      maxLines: 2,
+                      decoration: _inputDecoration(
+                        'Стан здоровʼя / хвороби (через кому)',
+                        Icons.health_and_safety_outlined,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Рівень підготовки',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _fitnessLevel,
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'beginner',
+                              child: Text('Початківець'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'intermediate',
+                              child: Text('Досвідчений'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'advanced',
+                              child: Text('Експерт'),
+                            ),
+                          ],
+                          onChanged: (v) => setState(() => _fitnessLevel = v!),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Вподобана складність маршрутів',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _preferredDifficulty,
+                          hint: const Text('Оберіть складність'),
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'easy',
+                              child: Text('Легка'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'medium',
+                              child: Text('Середня'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'hard',
+                              child: Text('Складна'),
+                            ),
+                          ],
+                          onChanged: (v) =>
+                              setState(() => _preferredDifficulty = v),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Additional Settings
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Додаткові налаштування',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _SettingsTile(
+                      title: 'Змінити пароль',
+                      icon: Icons.lock_outline,
+                      onTap: () {},
+                    ),
+                    const Divider(height: 24),
+                    _SettingsTile(
+                      title: 'Приватність',
+                      icon: Icons.privacy_tip_outlined,
+                      onTap: () {},
+                    ),
+                    const Divider(height: 24),
+                    _SettingsTile(
+                      title: 'Повідомлення',
+                      icon: Icons.notifications_outlined,
+                      onTap: () {},
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: Colors.grey.shade600),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _SettingsTile({
+    required this.title,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        hoverColor: Colors.grey.withOpacity(0.08),
+        mouseCursor: SystemMouseCursors.click,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: Colors.grey.shade700, size: 20),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey.shade400),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

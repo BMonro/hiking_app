@@ -1,0 +1,401 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../domain/route_detail.dart';
+import '../domain/route_model.dart';
+import 'routes_provider.dart';
+
+class RouteDetailsScreen extends ConsumerWidget {
+  final String routeId;
+
+  const RouteDetailsScreen({
+    super.key,
+    required this.routeId,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final detailAsync = ref.watch(routeDetailProvider(routeId));
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F5F2),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF3F5F2),
+        elevation: 0,
+        title: const Text(
+          'Маршрут',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+      ),
+      body: detailAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text('Помилка: $e'),
+          ),
+        ),
+        data: (detail) {
+          if (detail == null) {
+            return const Center(child: Text('Маршрут не знайдено'));
+          }
+          return _RouteDetailBody(detail: detail, routeId: routeId, ref: ref);
+        },
+      ),
+    );
+  }
+}
+
+class _RouteDetailBody extends StatelessWidget {
+  final RouteDetail detail;
+  final String routeId;
+  final WidgetRef ref;
+
+  const _RouteDetailBody({
+    required this.detail,
+    required this.routeId,
+    required this.ref,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final route = detail.route;
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+    final isAuthor =
+        currentUserId != null && route.authorId == currentUserId;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  route.title,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: route.difficultyColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: route.difficultyColor.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Text(
+                  route.difficultyLabel,
+                  style: TextStyle(
+                    color: route.difficultyColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(Icons.alt_route, size: 18, color: Colors.grey[700]),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Вид: ${route.routeTypeLabelUk}',
+                  style: TextStyle(color: Colors.grey[700], fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'Огляд',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          _StatsRow(route: route),
+          const SizedBox(height: 24),
+          const Text(
+            'Точки маршруту',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          if (detail.waypoints.isEmpty)
+            Text(
+              'Точки ще не додані.',
+              style: TextStyle(color: Colors.grey[600]),
+            )
+          else
+            ...detail.waypoints.map(
+              (w) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
+                    child: Icon(
+                      _iconForPointType(w.pointType),
+                      color: const Color(0xFF2E7D32),
+                      size: 20,
+                    ),
+                  ),
+                  title: Text(
+                    (w.name != null && w.name!.isNotEmpty)
+                        ? w.name!
+                        : w.typeLabelUk,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    '${w.typeLabelUk} · '
+                    '${w.position.latitude.toStringAsFixed(4)}, '
+                    '${w.position.longitude.toStringAsFixed(4)}',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ),
+              ),
+            ),
+          if (route.description.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const Text(
+              'Опис',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                route.description,
+                style: const TextStyle(fontSize: 14, height: 1.45),
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => context.push('/routes/detail/$routeId/weather'),
+              icon: const Icon(Icons.wb_cloudy_outlined),
+              label: const Text('Погода на точках маршруту'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1565C0),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: Color(0xFF1565C0)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () =>
+                  context.push('/navigation?routeId=${Uri.encodeComponent(routeId)}'),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('Почати проходження'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          if (isAuthor) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Редагування зі списку маршрутів'),
+                        ),
+                      );
+                    },
+                    child: const Text('Редагувати'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                    onPressed: () async {
+                      final ok = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Видалити маршрут'),
+                          content: Text('Видалити «${route.title}»?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Скасувати'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Видалити'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (ok == true && context.mounted) {
+                        try {
+                          await ref
+                              .read(routesRepositoryProvider)
+                              .deleteRoute(routeId);
+                          ref.invalidate(routesProvider);
+                          ref.invalidate(routeDetailProvider(routeId));
+                          if (context.mounted) context.pop();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Помилка: $e')),
+                            );
+                          }
+                        }
+                      }
+                    },
+                    child: const Text('Видалити'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _iconForPointType(String t) {
+    return switch (t) {
+      'peak' => Icons.terrain,
+      'water' => Icons.water_drop_outlined,
+      'shelter' => Icons.night_shelter_outlined,
+      'danger' => Icons.warning_amber_outlined,
+      'viewpoint' => Icons.photo_camera_outlined,
+      'finish' => Icons.flag,
+      'start' => Icons.play_circle_outline,
+      _ => Icons.place_outlined,
+    };
+  }
+}
+
+class _StatsRow extends StatelessWidget {
+  final RouteModel route;
+
+  const _StatsRow({required this.route});
+
+  @override
+  Widget build(BuildContext context) {
+    final pace = route.durationH > 0
+        ? '${(route.distanceKm / route.durationH).toStringAsFixed(1)} км/год'
+        : '—';
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _StatCard(
+                icon: Icons.straighten,
+                label: 'Відстань',
+                value: '${route.distanceKm} км',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatCard(
+                icon: Icons.schedule,
+                label: 'Час',
+                value: '${route.durationH.toStringAsFixed(1)} год',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _StatCard(
+                icon: Icons.trending_up,
+                label: 'Набір висоти',
+                value: '${route.ascentM} м',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatCard(
+                icon: Icons.speed_outlined,
+                label: 'Темп',
+                value: pace,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF2E7D32), size: 22),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

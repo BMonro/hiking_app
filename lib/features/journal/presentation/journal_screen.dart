@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -26,15 +27,28 @@ final journalStatsProvider = FutureProvider((ref) async {
   return data;
 });
 
-class _JournalColors {
-  static const background = Color(0xFFF1F6EE);
-  static const surface = Color(0xFFFFFDFC);
-  static const primary = Color(0xFF6F8B4E);
-  static const primaryDark = Color(0xFF4F6736);
-  static const accent = Color(0xFFD99058);
-  static const textMain = Color(0xFF35271F);
-  static const textSecondary = Color(0xFF6E5849);
-  static const success = Color(0xFF6F8B4E);
+/// Гамма як у [RoutesScreen]: фон `0xFFF3F5F2`, акцент `0xFF2E7D32`.
+class _JournalTheme {
+  static const background = Color(0xFFF3F5F2);
+  static const primary = Color(0xFF2E7D32);
+}
+
+Color _difficultyChipColor(String? difficulty) {
+  return switch (difficulty) {
+    'easy' => const Color(0xFF4CAF50),
+    'medium' => const Color(0xFFFF9800),
+    'hard' => const Color(0xFFF44336),
+    _ => const Color(0xFF4CAF50),
+  };
+}
+
+String? _difficultyShortLabel(String? difficulty) {
+  return switch (difficulty) {
+    'easy' => 'Легка',
+    'medium' => 'Середня',
+    'hard' => 'Важка',
+    _ => null,
+  };
 }
 
 class JournalScreen extends ConsumerStatefulWidget {
@@ -112,7 +126,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: _JournalColors.primary),
+            style: TextButton.styleFrom(foregroundColor: _JournalTheme.primary),
             child: const Text('Видалити'),
           ),
         ],
@@ -147,16 +161,33 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     final statsAsync = ref.watch(journalStatsProvider);
 
     return Scaffold(
-      backgroundColor: _JournalColors.background,
+      backgroundColor: _JournalTheme.background,
       appBar: AppBar(
-        backgroundColor: _JournalColors.success,
-        surfaceTintColor: const Color(0x00000000),
+        backgroundColor: _JournalTheme.background,
         elevation: 0,
         centerTitle: true,
+        leading: IconButton(
+          tooltip: 'Назад до профілю',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/profile');
+            }
+          },
+        ),
         title: const Text(
           'Журнал',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Новий запис',
+            icon: const Icon(Icons.add),
+            onPressed: () => _showEntryDialog(context, ref),
+          ),
+        ],
       ),
       body: CustomScrollView(
         slivers: [
@@ -176,17 +207,16 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                           const Text(
                             'Мій журнал',
                             style: TextStyle(
-                              fontSize: 26,
+                              fontSize: 24,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: -0.2,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             'Фіксуй маршрути, враження та спогади',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
-                              color: _JournalColors.textSecondary,
+                              color: Colors.grey[600],
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -195,21 +225,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                       ElevatedButton.icon(
                         onPressed: () => _showEntryDialog(context, ref),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _JournalColors.primary,
-                          foregroundColor: _JournalColors.surface,
-                          elevation: 0,
+                          backgroundColor: _JournalTheme.primary,
+                          foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            horizontal: 14,
+                            vertical: 10,
                           ),
                         ),
-                        icon: const Icon(Icons.add_rounded, size: 18),
+                        icon: const Icon(Icons.add, size: 16),
                         label: const Text(
                           'Запис',
-                          style: TextStyle(fontWeight: FontWeight.w700),
+                          style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
                     ],
@@ -220,20 +246,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                     error: (_, __) => const SizedBox(),
                     data: (stats) => Container(
                       decoration: BoxDecoration(
-                        color: _JournalColors.surface,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: _JournalColors.primary.withOpacity(0.28)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _JournalColors.success.withOpacity(0.18),
-                            blurRadius: 22,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
                       ),
                       padding: const EdgeInsets.symmetric(
-                        vertical: 20,
-                        horizontal: 18,
+                        vertical: 18,
+                        horizontal: 16,
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -245,7 +263,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                           Container(
                               width: 1,
                               height: 44,
-                              color: _JournalColors.textSecondary.withOpacity(0.2)),
+                              color: Colors.grey[300]),
                           _JournalStat(
                             value: '${stats?['total_distance_km'] ?? 0}',
                             label: 'Км\nпройдено',
@@ -253,7 +271,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                           Container(
                               width: 1,
                               height: 44,
-                              color: _JournalColors.textSecondary.withOpacity(0.2)),
+                              color: Colors.grey[300]),
                           _JournalStat(
                             value: _formatAscent(stats?['total_ascent_m']),
                             label: 'М вгору',
@@ -266,7 +284,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                   const Text(
                     'Останні записи',
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 18,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -277,26 +295,47 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           ),
           journalAsync.when(
             loading: () => const SliverToBoxAdapter(
-              child: Center(child: CircularProgressIndicator()),
+              child: Padding(
+                padding: EdgeInsets.only(top: 48),
+                child: Center(child: CircularProgressIndicator()),
+              ),
             ),
             error: (e, _) => SliverToBoxAdapter(
-              child: Center(child: Text('Помилка: $e')),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                      const SizedBox(height: 16),
+                      Text('Помилка: $e'),
+                    ],
+                  ),
+                ),
+              ),
             ),
             data: (entries) => entries.isEmpty
                 ? SliverToBoxAdapter(
                     child: Center(
                       child: Padding(
-                        padding: const EdgeInsets.all(40),
+                        padding: const EdgeInsets.all(48),
                         child: Column(
                           children: [
                             Icon(Icons.book_outlined,
-                                size: 64,
-                                color: _JournalColors.textSecondary.withOpacity(0.35)),
+                                size: 64, color: Colors.grey[400]),
                             const SizedBox(height: 16),
                             Text(
                               'Журнал порожній',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Натисніть «Запис» щоб додати перший',
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                color: _JournalColors.textSecondary.withOpacity(0.8),
+                                color: Colors.grey[500],
+                                fontSize: 13,
                               ),
                             ),
                           ],
@@ -359,7 +398,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: _JournalColors.surface,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -403,12 +442,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                       width: 40,
                       height: 40,
                       decoration: BoxDecoration(
-                        color: _JournalColors.primary.withOpacity(0.1),
+                        color: _JournalTheme.primary.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(
                         Icons.terrain,
-                        color: _JournalColors.primary,
+                        color: _JournalTheme.primary,
                         size: 22,
                       ),
                     ),
@@ -434,10 +473,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                     '${selectedDate.day}.${selectedDate.month}.${selectedDate.year}',
                   ),
                   style: OutlinedButton.styleFrom(
+                    foregroundColor: _JournalTheme.primary,
+                    side: const BorderSide(color: _JournalTheme.primary),
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
                   ),
                   onPressed: () async {
                     final date = await showDatePicker(
@@ -498,10 +536,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                                 existingImageUrls[index],
                                 fit: BoxFit.cover,
                                 errorBuilder: (_, __, ___) => Container(
-                                  color: _JournalColors.background,
+                                  color: _JournalTheme.background,
                                   alignment: Alignment.center,
                                   child: Icon(Icons.broken_image,
-                                      color: _JournalColors.textSecondary.withOpacity(0.7)),
+                                      color: Colors.grey[500]),
                                 ),
                               ),
                               onRemove: () => setModalState(() {
@@ -538,23 +576,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                     'Додати фото (${existingImageUrls.length + selectedImages.length}/5)',
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: _JournalColors.primary,
-                    side: const BorderSide(color: _JournalColors.primary),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    foregroundColor: _JournalTheme.primary,
+                    side: const BorderSide(color: _JournalTheme.primary),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
                 const SizedBox(height: 20),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _JournalColors.primary,
-                    foregroundColor: _JournalColors.surface,
+                    backgroundColor: _JournalTheme.primary,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
                   ),
                   onPressed: () async {
                     if (titleController.text.trim().isEmpty) {
@@ -677,8 +709,9 @@ class _JournalStat extends StatelessWidget {
         Text(
           value,
           style: const TextStyle(
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: FontWeight.w800,
+            color: _JournalTheme.primary,
           ),
         ),
         const SizedBox(height: 2),
@@ -687,8 +720,60 @@ class _JournalStat extends StatelessWidget {
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 11,
-            color: _JournalColors.textSecondary.withOpacity(0.9),
+            color: Colors.grey[600],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _JournalThumbnail extends StatelessWidget {
+  final String? imageUrl;
+
+  const _JournalThumbnail({required this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholder = ColoredBox(
+      color: _JournalTheme.primary.withValues(alpha: 0.08),
+      child: const Center(
+        child: Icon(Icons.terrain, color: _JournalTheme.primary, size: 26),
+      ),
+    );
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: imageUrl != null
+            ? Image.network(
+                imageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => placeholder,
+              )
+            : placeholder,
+      ),
+    );
+  }
+}
+
+class _JournalStatChip extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _JournalStatChip({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: TextStyle(color: Colors.grey[700], fontSize: 13),
         ),
       ],
     );
@@ -714,153 +799,107 @@ class _JournalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final date = DateTime.parse(entry['date']);
     final difficulty = entry['routes']?['difficulty'] as String?;
-
-    String? diffLabel;
-    Color? diffColor;
-    if (difficulty == 'easy') {
-      diffLabel = 'Легка';
-      diffColor = _JournalColors.success;
-    } else if (difficulty == 'medium') {
-      diffLabel = 'Середня';
-      diffColor = _JournalColors.accent;
-    } else if (difficulty == 'hard') {
-      diffLabel = 'Важка';
-      diffColor = _JournalColors.primaryDark;
-    }
+    final diffLabel = _difficultyShortLabel(difficulty);
+    final diffColor = _difficultyChipColor(difficulty);
 
     final routeTitle = entry['routes']?['title'] as String?;
     final notes = entry['notes'] as String?;
     final imageUrls = _extractImageUrls(entry);
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: _JournalColors.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _JournalColors.primary.withOpacity(0.3)),
-        boxShadow: [
-          BoxShadow(
-            color: _JournalColors.success.withOpacity(0.16),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Material(
-        color: const Color(0x00000000),
-        borderRadius: BorderRadius.circular(24),
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
         child: InkWell(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(16),
           onTap: onToggle,
           child: Padding(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(
-                      width: 58,
-                      height: 58,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: imageUrls.isNotEmpty
-                            ? Image.network(
-                                imageUrls.first,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  decoration: const BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        _JournalColors.accent,
-                                        _JournalColors.primary
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    Icons.terrain,
-                                    color: _JournalColors.surface,
-                                    size: 28,
-                                  ),
-                                ),
-                              )
-                            : Container(
-                                decoration: const BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      _JournalColors.accent,
-                                      _JournalColors.primary
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.terrain,
-                                  color: _JournalColors.surface,
-                                  size: 28,
-                                ),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
+                    _JournalThumbnail(imageUrl: imageUrls.isNotEmpty ? imageUrls.first : null),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            entry['title'] ?? 'Похід',
-                            style: const TextStyle(
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          if (routeTitle != null) ...[
-                            Text(
-                              routeTitle,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: _JournalColors.textSecondary.withOpacity(0.9),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  entry['title'] ?? 'Похід',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
+                              if (diffLabel != null) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: diffColor.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: diffColor.withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    diffLabel,
+                                    style: TextStyle(
+                                      color: diffColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          if (routeTitle != null) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Icon(Icons.alt_route, size: 14, color: Colors.grey[600]),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    routeTitle,
+                                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 8),
                           ],
+                          const SizedBox(height: 6),
                           Row(
                             children: [
-                              Icon(
-                                Icons.calendar_today_outlined,
-                                size: 12,
-                                color: _JournalColors.textSecondary.withOpacity(0.8),
-                              ),
+                              Icon(Icons.calendar_today_outlined, size: 14, color: Colors.grey[600]),
                               const SizedBox(width: 4),
                               Text(
                                 '${date.day} ${_monthName(date.month)} ${date.year}',
-                                style: TextStyle(
-                                  color: _JournalColors.textSecondary.withOpacity(0.8),
-                                  fontSize: 12,
-                                ),
+                                style: TextStyle(color: Colors.grey[600], fontSize: 13),
                               ),
-                              if (!expanded &&
-                                  notes != null &&
-                                  notes.isNotEmpty) ...[
+                              if (!expanded && notes != null && notes.isNotEmpty) ...[
                                 const SizedBox(width: 8),
-                                const Text('•',
-                                    style:
-                                        TextStyle(color: _JournalColors.textSecondary)),
+                                const Text('•', style: TextStyle(color: Colors.grey)),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     notes,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: _JournalColors.textSecondary.withOpacity(0.8),
-                                      fontSize: 12,
-                                    ),
+                                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
                                   ),
                                 ),
                               ],
@@ -869,57 +908,33 @@ class _JournalCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (diffLabel != null)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: diffColor!.withOpacity(0.14),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Text(
-                              diffLabel,
-                              style: TextStyle(
-                                color: diffColor,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        Icon(
-                          expanded ? Icons.expand_less : Icons.expand_more,
-                          color: _JournalColors.textSecondary.withOpacity(0.9),
-                        ),
-                      ],
+                    Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      color: Colors.grey[600],
+                      size: 22,
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     if (entry['actual_distance_km'] != null)
-                      _MiniStat(
-                        value: '${entry['actual_distance_km']}',
-                        label: 'км',
+                      _JournalStatChip(
+                        icon: Icons.straighten,
+                        text: '${entry['actual_distance_km']} км',
                       ),
                     if (entry['actual_duration_h'] != null) ...[
-                      const SizedBox(width: 12),
-                      _MiniStat(
-                        value: '${entry['actual_duration_h']}',
-                        label: 'год',
+                      const SizedBox(width: 16),
+                      _JournalStatChip(
+                        icon: Icons.schedule,
+                        text: '${entry['actual_duration_h']} год',
                       ),
                     ],
                     if (entry['actual_ascent_m'] != null) ...[
-                      const SizedBox(width: 12),
-                      _MiniStat(
-                        value: '${entry['actual_ascent_m']}',
-                        label: 'м ↑',
+                      const SizedBox(width: 16),
+                      _JournalStatChip(
+                        icon: Icons.trending_up,
+                        text: '${entry['actual_ascent_m']} м',
                       ),
                     ],
                   ],
@@ -931,18 +946,18 @@ class _JournalCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (expanded && notes != null && notes.isNotEmpty) ...[
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 14),
                         Text(
                           notes,
                           style: TextStyle(
-                            color: _JournalColors.textSecondary,
+                            color: Colors.grey[800],
                             fontSize: 14,
                             height: 1.5,
                           ),
                         ),
                       ],
                       if (expanded) ...[
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 14),
                         if (imageUrls.isNotEmpty) ...[
                           LayoutBuilder(
                             builder: (context, constraints) {
@@ -957,20 +972,17 @@ class _JournalCard extends StatelessWidget {
                                       width: tileSize,
                                       height: tileSize,
                                       child: ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(14),
+                                        borderRadius: BorderRadius.circular(12),
                                         child: Image.network(
                                           previewUrls[index],
                                           fit: BoxFit.cover,
-                                          errorBuilder:
-                                              (context, error, stackTrace) =>
-                                                  Container(
-                                            color: _JournalColors.background,
+                                          errorBuilder: (context, error, stackTrace) =>
+                                              Container(
+                                            color: _JournalTheme.background,
                                             alignment: Alignment.center,
                                             child: Icon(
                                               Icons.broken_image,
-                                              color: _JournalColors.textSecondary
-                                                  .withOpacity(0.75),
+                                              color: Colors.grey[500],
                                             ),
                                           ),
                                         ),
@@ -983,29 +995,22 @@ class _JournalCard extends StatelessWidget {
                               );
                             },
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
                         ],
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            _CardActionIconButton(
-                              icon: Icons.edit_rounded,
+                            IconButton(
                               tooltip: 'Редагувати',
-                              foregroundColor: _JournalColors.primaryDark,
-                              backgroundColor:
-                                  _JournalColors.success.withOpacity(0.22),
-                              hoverColor: _JournalColors.success.withOpacity(0.33),
-                              onTap: onEdit,
+                              onPressed: onEdit,
+                              icon: const Icon(Icons.edit_outlined),
+                              color: _JournalTheme.primary,
                             ),
-                            const SizedBox(width: 10),
-                            _CardActionIconButton(
-                              icon: Icons.delete_outline_rounded,
+                            IconButton(
                               tooltip: 'Видалити',
-                              foregroundColor: _JournalColors.primaryDark,
-                              backgroundColor:
-                                  _JournalColors.primary.withOpacity(0.16),
-                              hoverColor: _JournalColors.primary.withOpacity(0.28),
-                              onTap: onDelete,
+                              onPressed: onDelete,
+                              icon: const Icon(Icons.delete_outline),
+                              color: Colors.grey[700],
                             ),
                           ],
                         ),
@@ -1086,32 +1091,6 @@ class _JournalCard extends StatelessWidget {
   }
 }
 
-class _MiniStat extends StatelessWidget {
-  final String value;
-  final String label;
-
-  const _MiniStat({required this.value, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: _JournalColors.success.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        '$value $label'.trim(),
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: _JournalColors.textMain,
-        ),
-      ),
-    );
-  }
-}
-
 class _PhotoTile extends StatelessWidget {
   final double size;
   final Widget image;
@@ -1144,10 +1123,10 @@ class _PhotoTile extends StatelessWidget {
                 width: 22,
                 height: 22,
                 decoration: BoxDecoration(
-                  color: _JournalColors.primaryDark.withOpacity(0.9),
+                  color: const Color(0xFF424242),
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: const Icon(Icons.close, size: 14, color: _JournalColors.surface),
+                child: const Icon(Icons.close, size: 14, color: Colors.white),
               ),
             ),
           ),
@@ -1157,84 +1136,3 @@ class _PhotoTile extends StatelessWidget {
   }
 }
 
-class _CardActionIconButton extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final Color foregroundColor;
-  final Color backgroundColor;
-  final Color hoverColor;
-  final VoidCallback onTap;
-
-  const _CardActionIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.foregroundColor,
-    required this.backgroundColor,
-    required this.hoverColor,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          mouseCursor: SystemMouseCursors.click,
-          hoverColor: hoverColor,
-          splashColor: foregroundColor.withOpacity(0.12),
-          highlightColor: foregroundColor.withOpacity(0.08),
-          child: SizedBox(
-            width: 42,
-            height: 42,
-            child: Icon(icon, color: foregroundColor, size: 22),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MiniProgressBar extends StatelessWidget {
-  final Color color;
-  final double width;
-
-  const _MiniProgressBar({required this.color, required this.width});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      flex: (width * 100).round(),
-      child: Container(
-        height: 6,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-    );
-  }
-}
-
-class _ImagePreview extends StatelessWidget {
-  final Color color;
-
-  const _ImagePreview({required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        height: 72,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(16),
-        ),
-      ),
-    );
-  }
-}

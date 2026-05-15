@@ -1,8 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../routes/domain/route_model.dart';
+
+String _formatTripDateRange(Map<String, dynamic>? trip) {
+  if (trip == null) return '';
+  final s = trip['start_date'];
+  final e = trip['end_date'];
+  if (s == null) return '';
+  final sd = s.toString().split('T').first;
+  final ed = e?.toString().split('T').first;
+  if (ed == null || ed == sd) return sd;
+  return '$sd — $ed';
+}
+
+String _fitnessLevelUa(String? v) {
+  return switch (v) {
+    'beginner' => 'Початківець',
+    'intermediate' => 'Середній',
+    'advanced' => 'Експерт',
+    _ => 'Не вказано',
+  };
+}
+
+String _profileDisplayName(Map<String, dynamic>? prof) {
+  if (prof == null) return 'Учасник';
+  final n = (prof['full_name'] as String?)?.trim();
+  return n != null && n.isNotEmpty ? n : 'Учасник';
+}
 
 final groupHikesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   final data = await Supabase.instance.client
@@ -107,6 +134,24 @@ class GroupHikesScreen extends ConsumerWidget {
                   value: 'easy',
                   selected: filter == 'easy',
                 ),
+                const SizedBox(width: 8),
+                _FilterPill(
+                  label: 'Середні',
+                  value: 'medium',
+                  selected: filter == 'medium',
+                ),
+                const SizedBox(width: 8),
+                _FilterPill(
+                  label: 'Складні',
+                  value: 'hard',
+                  selected: filter == 'hard',
+                ),
+                const SizedBox(width: 8),
+                _FilterPill(
+                  label: 'Кільцеві',
+                  value: 'circular',
+                  selected: filter == 'circular',
+                ),
               ],
             ),
           ),
@@ -123,7 +168,13 @@ class GroupHikesScreen extends ConsumerWidget {
                   final id = (trip['id'] ?? '').toString().toLowerCase();
                   final status = (trip['status'] ?? 'open').toString();
                   final isMine = trip['organizer_id'] == userId;
-                  final isEasy = route?['difficulty'] == 'easy';
+                  final difficulty = route?['difficulty']?.toString();
+                  final isEasy = difficulty == 'easy';
+                  final isMedium = difficulty == 'medium';
+                  final isHard = difficulty == 'hard';
+                  final routeType =
+                      RouteModel.normalizeStoredRouteType(route?['route_type']);
+                  final isCircular = routeType == 'circular';
                   final matchesSearch = search.isEmpty ||
                       title.contains(search) ||
                       code.contains(search) ||
@@ -132,6 +183,9 @@ class GroupHikesScreen extends ConsumerWidget {
                   final matchesFilter = switch (filter) {
                     'mine' => isMine,
                     'easy' => isEasy,
+                    'medium' => isMedium,
+                    'hard' => isHard,
+                    'circular' => isCircular,
                     'open' => status == 'open',
                     _ => true,
                   };
@@ -239,6 +293,7 @@ class GroupHikesScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
+                    key: ValueKey(selectedRouteId ?? 'route'),
                     initialValue: selectedRouteId,
                     decoration: _inputDecoration('Маршрут *'),
                     items: routeList
@@ -367,8 +422,31 @@ class GroupHikesScreen extends ConsumerWidget {
 
                       if (errors.isNotEmpty) {
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(errors.first)),
+                        await showDialog<void>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Перевірте дані'),
+                            content: SingleChildScrollView(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: errors
+                                    .map(
+                                      (e) => Padding(
+                                        padding: const EdgeInsets.only(bottom: 8),
+                                        child: Text('• $e'),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('OK'),
+                              ),
+                            ],
+                          ),
                         );
                         return;
                       }
@@ -548,9 +626,9 @@ class _TripCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: statusInfo.color.withOpacity(0.12),
+                    color: statusInfo.color.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: statusInfo.color.withOpacity(0.35)),
+                    border: Border.all(color: statusInfo.color.withValues(alpha: 0.35)),
                   ),
                   child: Text(
                     statusInfo.label,
@@ -596,6 +674,20 @@ class _TripCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ],
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => context.push('/trips/detail/${trip['id']}'),
+                icon: const Icon(Icons.info_outline, size: 20),
+                label: const Text('Деталі походу'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF2E7D32),
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -610,7 +702,7 @@ class _TripCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.14),
+                      color: Colors.orange.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text('Очікують: $pendingCount'),
@@ -642,10 +734,33 @@ class _TripCard extends StatelessWidget {
                     myRequestStatus: myRequestStatus,
                     tripId: trip['id'].toString(),
                     organizerId: trip['organizer_id'].toString(),
+                    approvedCount: approvedCount,
+                    maxMembers: maxMembers,
                   ),
                 ],
               ],
             ),
+            if (status != 'cancelled' &&
+                (isOrganizer || myRequestStatus == 'approved')) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    final title = trip['title']?.toString() ?? 'Похід';
+                    context.push(
+                      '/trips/chat/${trip['id']}?title=${Uri.encodeComponent(title)}',
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF2E7D32),
+                    side: const BorderSide(color: Color(0xFF2E7D32)),
+                  ),
+                  icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                  label: const Text('Чат групи'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -658,6 +773,8 @@ class _TripCard extends StatelessWidget {
     required String? myRequestStatus,
     required String tripId,
     required String organizerId,
+    required int approvedCount,
+    required int maxMembers,
   }) {
     if (status != 'open') {
       return Text('Набір закрито', style: TextStyle(color: Colors.grey[600]));
@@ -667,7 +784,7 @@ class _TripCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFF2E7D32).withOpacity(0.12),
+          color: const Color(0xFF2E7D32).withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Text('Ви в групі'),
@@ -678,7 +795,7 @@ class _TripCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.orange.withOpacity(0.13),
+          color: Colors.orange.withValues(alpha: 0.13),
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Text('Запит на розгляді'),
@@ -686,7 +803,13 @@ class _TripCard extends StatelessWidget {
     }
 
     return ElevatedButton(
-      onPressed: () => _joinTrip(context, tripId, organizerId),
+      onPressed: () => _joinTrip(
+        context,
+        tripId,
+        organizerId,
+        approvedCount: approvedCount,
+        maxMembers: maxMembers,
+      ),
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF2E7D32),
         foregroundColor: Colors.white,
@@ -698,8 +821,18 @@ class _TripCard extends StatelessWidget {
   Future<void> _joinTrip(
     BuildContext context,
     String tripId,
-    String organizerId,
-  ) async {
+    String organizerId, {
+    required int approvedCount,
+    required int maxMembers,
+  }) async {
+    if (approvedCount >= maxMembers) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Група вже набрана за кількістю місць')),
+        );
+      }
+      return;
+    }
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('trip_participants').upsert({
@@ -708,13 +841,53 @@ class _TripCard extends StatelessWidget {
         'status': 'pending',
       });
 
-      await Supabase.instance.client.from('notifications').insert({
-        'user_id': organizerId,
-        'type': 'trip_request',
-        'title': 'Нова заявка на похід',
-        'body': 'Користувач подав запит на приєднання до вашого походу',
-        'payload': {'trip_id': tripId, 'applicant_id': userId},
-      });
+      try {
+        final tripRow = await Supabase.instance.client
+            .from('trips')
+            .select('title, start_date, end_date')
+            .eq('id', tripId)
+            .maybeSingle();
+        final me = await Supabase.instance.client
+            .from('profiles')
+            .select('full_name, age, fitness_level, bio')
+            .eq('id', userId)
+            .maybeSingle();
+        final applicantName = (me?['full_name'] as String?)?.trim();
+        final name =
+            applicantName != null && applicantName.isNotEmpty
+                ? applicantName
+                : 'Учасник';
+        final tripTitle = (tripRow?['title'] as String?)?.trim() ?? 'Похід';
+        final dates = _formatTripDateRange(tripRow);
+        final age = me?['age'];
+        final fit = _fitnessLevelUa(me?['fitness_level'] as String?);
+        final bio = (me?['bio'] as String?)?.trim() ?? '';
+        final bioShort =
+            bio.length > 120 ? '${bio.substring(0, 120)}…' : bio;
+
+        final detailLines = <String>[
+          'Похід: $tripTitle',
+          if (dates.isNotEmpty) 'Дати: $dates',
+          if (age != null) 'Вік: $age',
+          'Рівень: $fit',
+          if (bioShort.isNotEmpty) 'Про себе: $bioShort',
+        ];
+
+        await Supabase.instance.client.from('notifications').insert({
+          'user_id': organizerId,
+          'type': 'trip_request',
+          'title': 'Заявка від $name',
+          'body': detailLines.join('\n'),
+          'payload': {
+            'trip_id': tripId,
+            'applicant_id': userId,
+            'applicant_name': name,
+            'trip_title': tripTitle,
+          },
+        });
+      } catch (_) {
+        // RLS на notifications може відхилити вставку — заявка вже збережена
+      }
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -759,6 +932,22 @@ class _TripCard extends StatelessWidget {
         .eq('trip_id', tripId)
         .eq('status', 'pending');
     final pendingList = List<Map<String, dynamic>>.from(pending);
+    final applicantIds = pendingList
+        .map((p) => p['user_id']?.toString())
+        .whereType<String>()
+        .toList();
+    final profileById = <String, Map<String, dynamic>>{};
+    if (applicantIds.isNotEmpty) {
+      final profs = await Supabase.instance.client
+          .from('profiles')
+          .select('id, full_name, age, fitness_level, bio')
+          .inFilter('id', applicantIds);
+      for (final p in List<Map<String, dynamic>>.from(profs)) {
+        final id = p['id']?.toString();
+        if (id == null) continue;
+        profileById[id] = p;
+      }
+    }
 
     if (!context.mounted) return;
     showModalBottomSheet(
@@ -779,10 +968,39 @@ class _TripCard extends StatelessWidget {
           itemBuilder: (context, index) {
             final request = pendingList[index];
             final applicantId = request['user_id'].toString();
+            final prof = profileById[applicantId];
+            final displayName = _profileDisplayName(prof);
+            final age = prof?['age'];
+            final fit = _fitnessLevelUa(prof?['fitness_level'] as String?);
+            final bio = (prof?['bio'] as String?)?.trim() ?? '';
             return Card(
               child: ListTile(
-                title: Text('Користувач ${applicantId.substring(0, 8)}'),
-                subtitle: const Text('Очікує рішення організатора'),
+                isThreeLine: bio.isNotEmpty,
+                title: Text(
+                  displayName,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      [
+                        if (age != null) 'Вік: $age',
+                        'Підготовка: $fit',
+                      ].join(' · '),
+                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                    ),
+                    if (bio.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        bio,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ],
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -821,6 +1039,32 @@ class _TripCard extends StatelessWidget {
     required bool approved,
   }) async {
     try {
+      if (approved) {
+        final tripRow = await Supabase.instance.client
+            .from('trips')
+            .select('max_members')
+            .eq('id', tripId)
+            .maybeSingle();
+        final maxM = (tripRow?['max_members'] as num?)?.toInt() ?? 0;
+        final parts = await Supabase.instance.client
+            .from('trip_participants')
+            .select('status')
+            .eq('trip_id', tripId);
+        final approvedN = List<Map<String, dynamic>>.from(parts)
+            .where((p) => p['status'] == 'approved')
+            .length;
+        if (approvedN >= maxM) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Досягнуто максимум учасників — спочатку звільніть місце'),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
       final status = approved ? 'approved' : 'rejected';
       await Supabase.instance.client
           .from('trip_participants')
@@ -828,15 +1072,42 @@ class _TripCard extends StatelessWidget {
           .eq('trip_id', tripId)
           .eq('user_id', applicantId);
 
-      await Supabase.instance.client.from('notifications').insert({
-        'user_id': applicantId,
-        'type': approved ? 'trip_approved' : 'trip_rejected',
-        'title': approved ? 'Заявку схвалено' : 'Заявку відхилено',
-        'body': approved
-            ? 'Вас додано до групи походу. Доступ до чату відкрито.'
-            : 'Організатор відхилив запит на приєднання.',
-        'payload': {'trip_id': tripId},
-      });
+      try {
+        final tripRow = await Supabase.instance.client
+            .from('trips')
+            .select('title, organizer_id')
+            .eq('id', tripId)
+            .maybeSingle();
+        final tripTitle =
+            (tripRow?['title'] as String?)?.trim() ?? 'Похід';
+        final orgId = tripRow?['organizer_id']?.toString();
+        String organizerLabel = 'Організатор';
+        if (orgId != null) {
+          final orgProf = await Supabase.instance.client
+              .from('profiles')
+              .select('full_name')
+              .eq('id', orgId)
+              .maybeSingle();
+          final on = (orgProf?['full_name'] as String?)?.trim();
+          if (on != null && on.isNotEmpty) organizerLabel = on;
+        }
+
+        await Supabase.instance.client.from('notifications').insert({
+          'user_id': applicantId,
+          'type': approved ? 'trip_approved' : 'trip_rejected',
+          'title': approved
+              ? 'Вас схвалено: $tripTitle'
+              : 'Заявку відхилено: $tripTitle',
+          'body': approved
+              ? 'Організатор $organizerLabel додав вас до походу «$tripTitle». Відкрийте чат групи для спілкування.'
+              : 'Організатор $organizerLabel відхилив запит на похід «$tripTitle».',
+          'payload': {
+            'trip_id': tripId,
+            'organizer_name': organizerLabel,
+            'trip_title': tripTitle,
+          },
+        });
+      } catch (_) {}
 
       if (context.mounted) {
         Navigator.pop(context);

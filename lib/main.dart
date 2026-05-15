@@ -11,6 +11,11 @@ void main() async {
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
+    // Implicit: листи підтвердження/скидання пароля працюють у будь-якому браузері.
+    // PKCE прив’язує посилання до одного пристрою (code_verifier) → otp_expired на іншому.
+    authOptions: const FlutterAuthClientOptions(
+      authFlowType: AuthFlowType.implicit,
+    ),
   );
 
   runApp(

@@ -119,4 +119,78 @@ class RoutesRepository {
   Future<void> deleteRoute(String routeId) async {
     await _client.from('routes').delete().eq('id', routeId);
   }
+
+  Future<List<RouteModel>> getMyRoutes() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    final data = await _client
+        .from('routes')
+        .select()
+        .eq('author_id', userId)
+        .order('created_at', ascending: false);
+
+    return (data as List)
+        .map((json) => RouteModel.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+  }
+
+  Future<List<RouteModel>> getOfflineRoutesFromServer() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    final data = await _client
+        .from('offline_routes')
+        .select('route_id, routes(*)')
+        .eq('user_id', userId)
+        .order('downloaded_at', ascending: false);
+
+    final routes = <RouteModel>[];
+    for (final row in data as List) {
+      final map = Map<String, dynamic>.from(row as Map);
+      final routeData = map['routes'];
+      if (routeData is Map) {
+        routes.add(RouteModel.fromJson(Map<String, dynamic>.from(routeData)));
+      }
+    }
+    return routes;
+  }
+
+  Future<bool> isRouteOffline(String routeId) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return false;
+
+    final row = await _client
+        .from('offline_routes')
+        .select('route_id')
+        .eq('user_id', userId)
+        .eq('route_id', routeId)
+        .maybeSingle();
+    return row != null;
+  }
+
+  Future<void> saveOfflineRoute(String routeId, double tileCacheMb) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) {
+      throw StateError('Потрібна авторизація');
+    }
+
+    await _client.from('offline_routes').upsert({
+      'user_id': userId,
+      'route_id': routeId,
+      'downloaded_at': DateTime.now().toUtc().toIso8601String(),
+      'tile_cache_mb': tileCacheMb,
+    });
+  }
+
+  Future<void> removeOfflineRoute(String routeId) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    await _client
+        .from('offline_routes')
+        .delete()
+        .eq('user_id', userId)
+        .eq('route_id', routeId);
+  }
 }

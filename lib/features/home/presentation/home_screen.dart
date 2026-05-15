@@ -1,55 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../ai/presentation/ai_providers.dart';
+import '../../ai/presentation/widgets/ai_chat_panel.dart';
+import '../../ai/presentation/widgets/recommended_routes_section.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final email = Supabase.instance.client.auth.currentUser?.email;
+    final nameAsync = ref.watch(homeDisplayNameProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
+      backgroundColor: const Color(0xFFFAFAF7),
       appBar: AppBar(
+        backgroundColor: const Color(0xFFFAFAF7),
         title: const Text('Головна'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Вітаємо',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w600,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(personalizedRoutesProvider);
+          ref.invalidate(homeDisplayNameProvider);
+          ref.invalidate(profileContextProvider);
+          await ref.read(personalizedRoutesProvider.future);
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              nameAsync.when(
+                loading: () => Text(
+                  'Вітаємо!',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                error: (_, __) => Text(
+                  'Вітаємо!',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                data: (name) => Text(
+                  'Вітаємо, $name!',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
-            if (email != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Text(
-                email,
+                'Персональні поради та маршрути для вашого рівня',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.grey[600],
                 ),
               ),
+              const SizedBox(height: 24),
+              const RecommendedRoutesSection(),
+              const SizedBox(height: 24),
+              const AiChatPanel(),
+              const SizedBox(height: 24),
+              _HomeTile(
+                icon: Icons.book_outlined,
+                title: 'Журнал походів',
+                subtitle: 'Нотатки, фото та статистика',
+                onTap: () => context.go('/journal'),
+              ),
+              const SizedBox(height: 12),
+              _HomeTile(
+                icon: Icons.emoji_events_outlined,
+                title: 'Досягнення',
+                subtitle: 'Ваші нагороди за активність',
+                onTap: () => context.push('/achievements'),
+              ),
             ],
-            const SizedBox(height: 24),
-            _HomeTile(
-              icon: Icons.book_outlined,
-              title: 'Журнал походів',
-              subtitle: 'Нотатки, фото та статистика',
-              onTap: () => context.go('/journal'),
-            ),
-            const SizedBox(height: 12),
-            _HomeTile(
-              icon: Icons.emoji_events_outlined,
-              title: 'Досягнення',
-              subtitle: 'Ваші нагороди за активність',
-              onTap: () => context.push('/achievements'),
-            ),
-          ],
+          ),
         ),
       ),
     );

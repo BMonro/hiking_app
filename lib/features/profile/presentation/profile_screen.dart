@@ -13,23 +13,12 @@ final profileProvider = FutureProvider((ref) async {
   return data;
 });
 
-final statsProvider = FutureProvider((ref) async {
-  final userId = Supabase.instance.client.auth.currentUser!.id;
-  final data = await Supabase.instance.client
-      .from('profile_stats')
-      .select()
-      .eq('user_id', userId)
-      .maybeSingle();
-  return data;
-});
-
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final profileAsync = ref.watch(profileProvider);
-    final statsAsync = ref.watch(statsProvider);
     final user = Supabase.instance.client.auth.currentUser;
 
     return Scaffold(
@@ -284,89 +273,6 @@ class ProfileScreen extends ConsumerWidget {
               },
             ),
             const SizedBox(height: 20),
-            Text(
-              'Статистика',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Colors.grey[850],
-              ),
-            ),
-            const SizedBox(height: 12),
-            statsAsync.when(
-              loading: () => Container(
-                height: 132,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: const Center(child: CircularProgressIndicator()),
-              ),
-              error: (_, __) => Container(
-                height: 132,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: const Center(
-                  child: Text('Не вдалося завантажити статистику'),
-                ),
-              ),
-              data: (stats) => Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _StatItem(
-                        value: '${stats?['total_hikes'] ?? 0}',
-                        label: 'Походів',
-                      ),
-                    ),
-                    Container(width: 1, height: 48, color: Colors.grey[200]),
-                    Expanded(
-                      child: _StatItem(
-                        value: '${stats?['total_distance_km'] ?? 0}',
-                        label: 'Км',
-                      ),
-                    ),
-                    Container(width: 1, height: 48, color: Colors.grey[200]),
-                    Expanded(
-                      child: _StatItem(
-                        value: _formatAscent(stats?['total_ascent_m']),
-                        label: 'тис. м',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
@@ -444,6 +350,13 @@ class ProfileScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 10),
             _MenuTile(
+              icon: Icons.route_outlined,
+              iconColor: const Color(0xFF2E7D32),
+              title: 'Мої маршрути',
+              onTap: () => context.push('/profile/my-routes'),
+            ),
+            const SizedBox(height: 10),
+            _MenuTile(
               icon: Icons.star_outline,
               iconColor: const Color(0xFF4F83CC),
               title: 'Досягнення',
@@ -457,6 +370,30 @@ class ProfileScreen extends ConsumerWidget {
               onTap: () => context.go('/settings'),
             ),
             const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => context.push('/statistics'),
+                icon: const Icon(Icons.bar_chart_rounded, size: 22),
+                label: const Text(
+                  'Статистика',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF24A175),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -502,40 +439,6 @@ class ProfileScreen extends ConsumerWidget {
     }
   }
 
-  String _formatAscent(dynamic value) {
-    if (value == null) return '0';
-    final double parsed = (value as num).toDouble();
-    if (parsed >= 1000) return '${(parsed / 1000).toStringAsFixed(1)}k';
-    return parsed.toStringAsFixed(0);
-  }
-}
-
-class _StatItem extends StatelessWidget {
-  final String value;
-  final String label;
-
-  const _StatItem({required this.value, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-        ),
-      ],
-    );
-  }
 }
 
 class _MenuTile extends StatelessWidget {

@@ -8,7 +8,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../routes/domain/route_detail.dart';
+import '../../routes/presentation/offline_route_provider.dart';
 import '../../routes/presentation/routes_provider.dart';
+import '../data/offline_map_service.dart';
+import '../data/offline_tile_provider.dart';
 import '../data/overpass_poi_repository.dart';
 import '../data/routing_repository.dart';
 import '../domain/map_poi.dart';
@@ -68,6 +72,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   bool _routeNavActive = false;
   int _routeProgressIndex = 0;
 
+  OfflineTileProvider? _offlineTileProvider;
+
   static const double _navFollowZoom = 17;
 
   // Карпати — початкова позиція карти
@@ -87,7 +93,15 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   Future<void> _loadRouteFromDatabase(String routeId) async {
     setState(() => _routeLoading = true);
     try {
-      final detail = await ref.read(routeDetailProvider(routeId).future);
+      final offlineService = ref.read(offlineMapServiceProvider);
+      RouteDetail? detail;
+      try {
+        detail = await ref.read(routeDetailProvider(routeId).future);
+      } catch (_) {
+        detail = null;
+      }
+      detail ??= await offlineService.loadCachedRouteDetail(routeId);
+
       if (!mounted) return;
       if (detail == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,6 +110,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         setState(() => _routeLoading = false);
         return;
       }
+
+      await _activateOfflineTilesIfNeeded(routeId, offlineService);
 
       final waypointPositions =
           detail.waypoints.map((w) => w.position).toList();
@@ -147,9 +163,25 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
+  Future<void> _activateOfflineTilesIfNeeded(
+    String routeId,
+    OfflineMapService offlineService,
+  ) async {
+    if (!await offlineService.hasOfflineMap(routeId)) return;
+    await offlineService.ensureOfflineRootCached();
+    if (!mounted) return;
+    _offlineTileProvider?.dispose();
+    _offlineTileProvider = OfflineTileProvider(
+      routeId: routeId,
+      offlineMapService: offlineService,
+    );
+    setState(() {});
+  }
+
   @override
   void dispose() {
     _poiDebounce?.cancel();
+    _offlineTileProvider?.dispose();
     _mapController.dispose();
     super.dispose();
   }
@@ -287,18 +319,34 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     return list;
   }
 
+  /// Доки FlutterMap не віддав реальний розмір, visibleBounds некоректні.
+  bool _isMapCameraReady(MapCamera camera) {
+    final s = camera.nonRotatedSize;
+    return s.x > 0 && s.y > 0;
+  }
+
   void _schedulePoiReload(MapCamera camera) {
     if (!_showPoiLayer) return;
+    if (!_isMapCameraReady(camera)) return;
     _poiDebounce?.cancel();
     _poiDebounce = Timer(const Duration(milliseconds: 750), () {
-      if (mounted) _loadPois(camera);
+      if (!mounted) return;
+      try {
+        final cam = _mapController.camera;
+        if (mounted && _isMapCameraReady(cam)) _loadPois(cam);
+      } catch (_) {}
     });
   }
 
   Future<void> _loadPois(MapCamera camera) async {
     if (!_showPoiLayer || !mounted) return;
 
-    if (camera.zoom < 11) {
+    if (!_isMapCameraReady(camera)) {
+      return;
+    }
+
+    // Трохи нижчий поріг — POI з’являються раніше при віддаленні.
+    if (camera.zoom < 10) {
       setState(() {
         _pois = [];
         _poiLoading = false;
@@ -348,6 +396,35 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
+  /// Після увімкнення шару карта інколи ще без розміру — чекаємо на layout.
+  Future<void> _reloadPoisAfterLayoutReady() async {
+    var warnedLowZoom = false;
+    for (var i = 0; i < 15; i++) {
+      if (!mounted || !_showPoiLayer) return;
+      try {
+        final cam = _mapController.camera;
+        if (!_isMapCameraReady(cam)) {
+          await Future<void>.delayed(const Duration(milliseconds: 64));
+          continue;
+        }
+        if (cam.zoom < 10 && mounted && !warnedLowZoom) {
+          warnedLowZoom = true;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Наблизьте карту (зум 10+), щоб завантажити точки інтересу.',
+              ),
+            ),
+          );
+        }
+        await _loadPois(cam);
+        return;
+      } catch (_) {
+        await Future<void>.delayed(const Duration(milliseconds: 64));
+      }
+    }
+  }
+
   void _togglePoiLayer() {
     setState(() {
       _showPoiLayer = !_showPoiLayer;
@@ -358,18 +435,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     });
     if (_showPoiLayer) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final cam = _mapController.camera;
-        if (cam.zoom < 11) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Наблизьте карту до рівня зуму 11 або вище, щоб з\'явились точки інтересу.',
-              ),
-            ),
-          );
-        }
-        _loadPois(cam);
+        _reloadPoisAfterLayoutReady();
       });
     }
   }
@@ -647,6 +713,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.hiking_app',
+                tileProvider: _offlineTileProvider,
               ),
               if (_routePoints != null && _routePoints!.length >= 2)
                 PolylineLayer(
@@ -913,6 +980,52 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
             ),
           Positioned(
             top: 0,
+            left: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8, left: 8),
+                child: Material(
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: () => _zoomBy(1),
+                        icon: const Icon(Icons.add),
+                        color: const Color(0xFF2E7D32),
+                        tooltip: 'Збільшити масштаб',
+                        padding: const EdgeInsets.all(10),
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 40,
+                        ),
+                      ),
+                      Divider(
+                        height: 1,
+                        thickness: 1,
+                        color: Colors.grey.shade200,
+                      ),
+                      IconButton(
+                        onPressed: () => _zoomBy(-1),
+                        icon: const Icon(Icons.remove),
+                        color: const Color(0xFF2E7D32),
+                        tooltip: 'Зменшити масштаб',
+                        padding: const EdgeInsets.all(10),
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 40,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
             right: 0,
             child: SafeArea(
               child: Padding(
@@ -999,5 +1112,16 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         );
       }
     });
+  }
+
+  void _zoomBy(double delta) {
+    try {
+      final cam = _mapController.camera;
+      final minZ = cam.minZoom ?? 1;
+      final maxZ = cam.maxZoom ?? 22;
+      final z = (cam.zoom + delta).clamp(minZ, maxZ);
+      if ((z - cam.zoom).abs() < 0.01) return;
+      _mapController.move(cam.center, z);
+    } catch (_) {}
   }
 }

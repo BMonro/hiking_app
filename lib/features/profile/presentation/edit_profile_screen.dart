@@ -141,18 +141,35 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
 
-      // Upload image if selected
+      // Upload image if selected (при 403 RLS — залишаємо старий avatar_url)
       String? avatarUrl;
       if (_selectedImage != null) {
         final fileName =
             '$userId-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg';
-        await Supabase.instance.client.storage
-            .from('avatars')
-            .upload(fileName, _selectedImage!);
-
-        avatarUrl = Supabase.instance.client.storage
-            .from('avatars')
-            .getPublicUrl(fileName);
+        try {
+          await Supabase.instance.client.storage
+              .from('avatars')
+              .upload(fileName, _selectedImage!);
+          avatarUrl = Supabase.instance.client.storage
+              .from('avatars')
+              .getPublicUrl(fileName);
+        } on StorageException {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Аватар не оновлено: немає доступу до сховища. Налаштуйте бакет avatars у Supabase.',
+                ),
+              ),
+            );
+          }
+          final existing = await Supabase.instance.client
+              .from('profiles')
+              .select('avatar_url')
+              .eq('id', userId)
+              .maybeSingle();
+          avatarUrl = existing?['avatar_url'] as String?;
+        }
       } else {
         final existing = await Supabase.instance.client
             .from('profiles')

@@ -1,9 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../navigation/data/offline_map_service.dart';
 import '../data/routes_repository.dart';
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
 
 final routesRepositoryProvider = Provider((ref) => RoutesRepository());
+
+final offlineMapServiceProvider = Provider((ref) => OfflineMapService());
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 final difficultyFilterProvider = StateProvider<String>((ref) => 'all');
@@ -28,8 +32,17 @@ final routesProvider = FutureProvider<List<RouteModel>>((ref) async {
   );
 });
 
+final myRoutesProvider = FutureProvider<List<RouteModel>>((ref) async {
+  final repo = ref.watch(routesRepositoryProvider);
+  return repo.getMyRoutes();
+});
+
 final routeDetailProvider =
     FutureProvider.family<RouteDetail?, String>((ref, routeId) async {
   final repo = ref.watch(routesRepositoryProvider);
-  return repo.getRouteDetail(routeId);
+  try {
+    final detail = await repo.getRouteDetail(routeId);
+    if (detail != null) return detail;
+  } catch (_) {}
+  return ref.read(offlineMapServiceProvider).loadCachedRouteDetail(routeId);
 });

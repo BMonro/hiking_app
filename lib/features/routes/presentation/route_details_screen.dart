@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
+import 'offline_route_provider.dart';
 import 'routes_provider.dart';
 
 class RouteDetailsScreen extends ConsumerWidget {
@@ -204,6 +205,8 @@ class _RouteDetailBody extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
+          _OfflineDownloadButton(detail: detail, routeId: routeId),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -288,6 +291,205 @@ class _RouteDetailBody extends StatelessWidget {
   }
 
   IconData _iconForPointType(String t) {
+    return _RouteDetailWaypointIcons.iconForPointType(t);
+  }
+}
+
+class _OfflineDownloadButton extends ConsumerStatefulWidget {
+  final RouteDetail detail;
+  final String routeId;
+
+  const _OfflineDownloadButton({
+    required this.detail,
+    required this.routeId,
+  });
+
+  @override
+  ConsumerState<_OfflineDownloadButton> createState() =>
+      _OfflineDownloadButtonState();
+}
+
+class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> {
+  bool _downloading = false;
+  double _progress = 0;
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+
+    final offlineService = ref.read(offlineMapServiceProvider);
+    final routesRepo = ref.read(routesRepositoryProvider);
+
+    try {
+      await for (final progress
+          in offlineService.downloadRouteMap(widget.detail)) {
+        if (!mounted) return;
+        setState(() => _progress = progress.fraction);
+      }
+
+      final sizeMb = await offlineService.cacheSizeMb(widget.routeId);
+      try {
+        await routesRepo.saveOfflineRoute(widget.routeId, sizeMb);
+      } catch (_) {
+        // Локальний кеш уже збережено — офлайн-карта працюватиме без запису в БД.
+      }
+
+      ref
+        ..invalidate(routeOfflineStatusProvider(widget.routeId))
+        ..invalidate(offlineRoutesProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Карту збережено для офлайн-використання')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не вдалося завантажити карту: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _progress = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _remove() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Видалити офлайн-карту'),
+        content: const Text(
+          'Завантажені тайли та локальна копія маршруту будуть видалені з пристрою.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Скасувати'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Видалити'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _downloading = true);
+    try {
+      await ref.read(offlineMapServiceProvider).deleteOfflineMap(widget.routeId);
+      try {
+        await ref.read(routesRepositoryProvider).removeOfflineRoute(widget.routeId);
+      } catch (_) {}
+      ref
+        ..invalidate(routeOfflineStatusProvider(widget.routeId))
+        ..invalidate(offlineRoutesProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Офлайн-карту видалено')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Помилка: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _downloading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offlineAsync = ref.watch(routeOfflineStatusProvider(widget.routeId));
+
+    return offlineAsync.when(
+      loading: () => const SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: null,
+          child: Text('Перевірка офлайн-карти...'),
+        ),
+      ),
+      error: (_, __) => SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _downloading ? null : _download,
+          icon: const Icon(Icons.download_outlined),
+          label: const Text('Завантажити для офлайн'),
+        ),
+      ),
+      data: (isOffline) {
+        if (_downloading) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LinearProgressIndicator(
+                value: _progress > 0 ? _progress : null,
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(4),
+                color: const Color(0xFF2E7D32),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _progress > 0
+                    ? 'Завантаження карти ${(_progress * 100).round()}%'
+                    : 'Підготовка завантаження...',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[700], fontSize: 13),
+              ),
+            ],
+          );
+        }
+
+        if (isOffline) {
+          return SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _remove,
+              icon: const Icon(Icons.offline_pin),
+              label: const Text('Офлайн-карта збережена'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF2E7D32),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: Color(0xFF2E7D32)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _download,
+            icon: const Icon(Icons.download_outlined),
+            label: const Text('Завантажити для офлайн'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF37474F),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              side: BorderSide(color: Colors.grey.shade400),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RouteDetailWaypointIcons {
+  static IconData iconForPointType(String t) {
     return switch (t) {
       'peak' => Icons.terrain,
       'water' => Icons.water_drop_outlined,

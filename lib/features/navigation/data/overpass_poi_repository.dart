@@ -25,7 +25,10 @@ class OverpassPoiRepository {
 
     final latSpan = (north - south).abs();
     final lonSpan = (east - west).abs();
-    if (latSpan > 0.22 || lonSpan > 0.35) {
+    // Занадто малий bbox був занадто жорсткий: на планшеті чи при зумі 11–12
+    // видима область часто > 0.22° → запити блокувались без потреби.
+    // Обмежуємо лише дуже великі запити (навантаження на Overpass).
+    if (latSpan > 0.65 || lonSpan > 1.0) {
       return null;
     }
 

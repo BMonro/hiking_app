@@ -1,97 +1,52 @@
-import 'dart:convert';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../profile/presentation/profile_screen.dart';
 import '../../routes/presentation/routes_provider.dart';
 import '../data/ai_service.dart';
-import '../data/profile_context_builder.dart';
-import '../data/route_recommendation_engine.dart';
 import '../domain/chat_message.dart';
 import '../domain/route_recommendation.dart';
 
 final aiServiceProvider = Provider((ref) => AiService());
 
-final profileContextProvider = FutureProvider<String>((ref) async {
-  return ProfileContextBuilder().build();
+/// Кеш: не пінгуємо Edge Function на кожному відкритті головної.
+final aiConfiguredProvider = FutureProvider<bool>((ref) async {
+  return ref.watch(aiServiceProvider).isAvailable();
 });
+
+final aiChatSendingProvider = StateProvider<bool>((ref) => false);
+
+final recommendationSourceProvider = StateProvider<String?>((ref) => null);
 
 final personalizedRoutesProvider =
     FutureProvider<List<RouteRecommendation>>((ref) async {
-  final repo = ref.read(routesRepositoryProvider);
-  final routes = await repo.getRoutes();
-  if (routes.isEmpty) return [];
+  ref.keepAlive();
 
-  final profile = await ref.watch(profileProvider.future);
   final ai = ref.read(aiServiceProvider);
-  final engine = RouteRecommendationEngine();
-
-  if (!ai.isConfigured) {
-    final candidates = engine.rank(profile: profile, routes: routes);
-    return candidates
-        .map((c) => RouteRecommendation(route: c.route, reason: c.reason))
-        .toList();
-  }
 
   try {
-    final context = await ref.read(profileContextProvider.future);
-    final catalog = routes
-        .take(40)
-        .map(
-          (r) => {
-            'id': r.id,
-            'title': r.title,
-            'difficulty': r.difficulty,
-            'distance_km': r.distanceKm,
-            'duration_h': r.durationH,
-            'ascent_m': r.ascentM,
-            'route_type': r.routeType,
-            'description': r.description.length > 120
-                ? '${r.description.substring(0, 120)}…'
-                : r.description,
-          },
-        )
-        .toList();
+    final result = await ai.fetchRecommendations();
+    ref.read(recommendationSourceProvider.notifier).state = result.source;
 
-    final system = '''
-Ти експерт з пішохідного туризму в Україні. Обери до 5 маршрутів з каталогу для користувача.
-Враховуй рівень підготовки, досвід, бажану складність, тривалість і обмеження здоровʼя.
-Не рекомендуй маршрути, що явно перевищують можливості.
-Відповідай ТІЛЬКИ JSON українською:
-{"recommendations":[{"route_id":"uuid","reason":"коротке пояснення до 120 символів"}]}
-''';
+    if (result.items.isEmpty) return [];
 
-    final user = '''
-Профіль користувача:
-$context
+    final ids = result.items.map((e) => e['route_id']!).toList();
+    final routes = await ref.read(routesRepositoryProvider).getRoutesByIds(ids);
+    final reasonById = {
+      for (final item in result.items) item['route_id']!: item['reason']!,
+    };
 
-Каталог маршрутів (JSON):
-${jsonEncode(catalog)}
-''';
-
-    final raw = await ai.completeJson(systemPrompt: system, userPrompt: user);
-    final parsed = AiService.parseRecommendationsJson(raw);
-    final byId = {for (final r in routes) r.id: r};
-    final result = <RouteRecommendation>[];
-    for (final item in parsed) {
-      final route = byId[item['route_id']];
-      if (route == null) continue;
-      result.add(
-        RouteRecommendation(
-          route: route,
-          reason: item['reason']!,
-        ),
-      );
-      if (result.length >= 5) break;
-    }
-    if (result.isNotEmpty) return result;
-  } catch (_) {}
-
-  final candidates = engine.rank(profile: profile, routes: routes);
-  return candidates
-      .map((c) => RouteRecommendation(route: c.route, reason: c.reason))
-      .toList();
+    return [
+      for (final route in routes)
+        if (reasonById.containsKey(route.id))
+          RouteRecommendation(
+            route: route,
+            reason: reasonById[route.id]!,
+          ),
+    ];
+  } catch (_) {
+    ref.read(recommendationSourceProvider.notifier).state = null;
+    return [];
+  }
 });
 
 class AiChatNotifier extends StateNotifier<List<ChatMessage>> {
@@ -116,34 +71,28 @@ class AiChatNotifier extends StateNotifier<List<ChatMessage>> {
   Future<void> send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    if (_ref.read(aiChatSendingProvider)) return;
 
-    final userMsg = ChatMessage(
-      role: 'user',
-      content: trimmed,
-      sentAt: DateTime.now(),
-    );
-    state = [...state, userMsg];
+    _ref.read(aiChatSendingProvider.notifier).state = true;
+
+    state = [
+      ...state,
+      ChatMessage(
+        role: 'user',
+        content: trimmed,
+        sentAt: DateTime.now(),
+      ),
+    ];
 
     try {
       final ai = _ref.read(aiServiceProvider);
-      if (!ai.isConfigured) {
+      ai.clearAvailabilityCache();
+      if (!await ai.isAvailable()) {
         throw AiNotConfiguredException();
       }
 
-      final context = await _ref.read(profileContextProvider.future);
-      final system = '''
-Ти дружній україномовний порадник з пішохідного туризму в застосунку HikingApp.
-Давай практичні, безпечні поради щодо спорядження, підготовки, харчування, погоди, темпу на стежці.
-Враховуй профіль користувача нижче. Не вигадуй конкретних GPS-координат.
-Якщо питання про медицину — рекомендуй звернутися до лікаря.
-Відповідай стисло (до 6 речень), структуровано за потреби.
-
-Профіль:
-$context
-''';
-
       final history = state.where((m) => m.role != 'system').toList();
-      final reply = await ai.chat(history: history, systemPrompt: system);
+      final reply = await ai.chat(history: history);
       state = [
         ...state,
         ChatMessage(
@@ -153,13 +102,22 @@ $context
         ),
       ];
     } on AiNotConfiguredException {
+      _ref.invalidate(aiConfiguredProvider);
       state = [
         ...state,
         ChatMessage(
           role: 'assistant',
           content:
-              'ШІ-порадник ще не налаштований. Додайте API-ключ у lib/core/config/ai_config.dart (див. ai_config.example.dart). '
-              'Тим часом перегляньте рекомендовані маршрути нижче — вони підібрані за вашим профілем.',
+              'ШІ-чат ще не налаштований на сервері. Додайте OPENAI_API_KEY у Supabase (Edge Functions → Secrets) і перезапустіть застосунок. Рекомендації маршрутів працюють за профілем.',
+          sentAt: DateTime.now(),
+        ),
+      ];
+    } on AiServiceException catch (e) {
+      state = [
+        ...state,
+        ChatMessage(
+          role: 'assistant',
+          content: e.message,
           sentAt: DateTime.now(),
         ),
       ];
@@ -168,11 +126,12 @@ $context
         ...state,
         ChatMessage(
           role: 'assistant',
-          content:
-              'Не вдалося отримати відповідь. Перевірте інтернет і ключ API. Спробуйте ще раз.',
+          content: 'Не вдалося отримати відповідь. Спробуйте пізніше.',
           sentAt: DateTime.now(),
         ),
       ];
+    } finally {
+      _ref.read(aiChatSendingProvider.notifier).state = false;
     }
   }
 
@@ -189,15 +148,20 @@ final aiChatProvider =
   return notifier;
 });
 
-final aiConfiguredProvider = Provider<bool>((ref) {
-  return ref.watch(aiServiceProvider).isConfigured;
-});
-
-/// Імʼя для привітання на головній.
 final homeDisplayNameProvider = FutureProvider<String>((ref) async {
-  final profile = await ref.watch(profileProvider.future);
-  final name = profile?['full_name']?.toString().trim();
+  ref.keepAlive();
+  final userId = Supabase.instance.client.auth.currentUser?.id;
+  if (userId == null) return 'мандрівнику';
+
+  final row = await Supabase.instance.client
+      .from('profiles')
+      .select('full_name')
+      .eq('id', userId)
+      .maybeSingle();
+
+  final name = row?['full_name']?.toString().trim();
   if (name != null && name.isNotEmpty) return name.split(' ').first;
+
   final email = Supabase.instance.client.auth.currentUser?.email;
   if (email != null && email.contains('@')) {
     return email.split('@').first;

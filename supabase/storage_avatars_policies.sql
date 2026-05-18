@@ -1,7 +1,18 @@
--- Виконайте в Supabase SQL Editor (або як міграцію), якщо бакет уже створено:
--- Dashboard → Storage → New bucket → назва: avatars → увімкніть Public, якщо потрібні getPublicUrl-посилання.
+-- Аватари: бакет + RLS (виконати в Supabase SQL Editor).
+-- Dashboard → Storage: переконайтесь, що бакет public, якщо використовуєте getPublicUrl.
 
--- Політики для bucket avatars (ім’я файлу в застосунку: {auth.uid()}-avatar-{timestamp}.jpg)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'avatars',
+  'avatars',
+  true,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS "avatars_public_read" ON storage.objects;
 DROP POLICY IF EXISTS "avatars_authenticated_insert_own" ON storage.objects;
@@ -13,6 +24,7 @@ CREATE POLICY "avatars_public_read"
   TO public
   USING (bucket_id = 'avatars');
 
+-- Файл у застосунку: {auth.uid()}-avatar.jpg
 CREATE POLICY "avatars_authenticated_insert_own"
   ON storage.objects FOR INSERT
   TO authenticated
@@ -25,6 +37,10 @@ CREATE POLICY "avatars_authenticated_update_own"
   ON storage.objects FOR UPDATE
   TO authenticated
   USING (
+    bucket_id = 'avatars'
+    AND name LIKE auth.uid()::text || '-%'
+  )
+  WITH CHECK (
     bucket_id = 'avatars'
     AND name LIKE auth.uid()::text || '-%'
   );

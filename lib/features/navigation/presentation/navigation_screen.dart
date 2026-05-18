@@ -9,13 +9,14 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../routes/domain/route_detail.dart';
-import '../../routes/presentation/offline_route_provider.dart';
 import '../../routes/presentation/routes_provider.dart';
 import '../data/offline_map_service.dart';
 import '../data/offline_tile_provider.dart';
 import '../data/overpass_poi_repository.dart';
 import '../data/routing_repository.dart';
+import '../domain/hike_session_summary.dart';
 import '../domain/map_poi.dart';
+import 'navigation_complete_dialog.dart';
 
 final locationProvider = StreamProvider<Position?>((ref) async* {
   bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -63,6 +64,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   List<MapPoi> _pois = [];
 
   List<LatLng>? _routePoints;
+  /// Ключові точки для перебудови (старт/фініш/проміжні з БД).
+  List<LatLng>? _navWaypoints;
   bool _routeLoading = false;
   bool _pickStartOnMap = false;
   LatLng? _routeDestination;
@@ -72,7 +75,23 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   bool _routeNavActive = false;
   int _routeProgressIndex = 0;
 
+  RouteDetail? _followedRouteDetail;
+  DateTime? _navSessionStartedAt;
+  double? _navSessionTotalMeters;
+  bool _completionHandled = false;
+
+  bool _isRerouting = false;
+  DateTime? _lastRerouteAt;
+  int _offRouteStreak = 0;
+
   OfflineTileProvider? _offlineTileProvider;
+
+  static const double _finishRadiusM = 80;
+  static const double _offRouteThresholdM = 45;
+  static const double _offRouteRerouteImmediatelyM = 75;
+  static const Duration _rerouteCooldown = Duration(seconds: 25);
+  static const double _minTraveledMForSummary = 200;
+  static const Duration _minSessionForSummary = Duration(minutes: 1);
 
   static const double _navFollowZoom = 17;
 
@@ -100,12 +119,19 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       } catch (_) {
         detail = null;
       }
-      detail ??= await offlineService.loadCachedRouteDetail(routeId);
 
       if (!mounted) return;
       if (detail == null) {
+        final hasMap = await offlineService.hasOfflineMap(routeId);
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Маршрут не знайдено')),
+          SnackBar(
+            content: Text(
+              hasMap
+                  ? 'Офлайн-карта є, але маршрут потрібно завантажити з інтернету'
+                  : 'Маршрут не знайдено',
+            ),
+          ),
         );
         setState(() => _routeLoading = false);
         return;
@@ -147,11 +173,19 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         return;
       }
 
+      final routePts = pts;
+
       setState(() {
-        _routePoints = pts;
+        _followedRouteDetail = detail;
+        _routePoints = routePts;
+        _navWaypoints = waypointPositions.length >= 2
+            ? waypointPositions
+            : [routePts.first, routePts.last];
         _routeLoading = false;
         _routeNavActive = false;
         _routeProgressIndex = 0;
+        _resetNavSession();
+        _resetRerouteState();
       });
       _fitRouteOnMap();
     } catch (e) {
@@ -187,20 +221,111 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   void _clearRoute() {
+    if (_navSessionStartedAt != null && !_completionHandled) {
+      _handleNavigationEnd(reachedFinish: _isNearRouteFinish());
+    }
     setState(() {
       _routePoints = null;
+      _navWaypoints = null;
       _pickedRouteStart = null;
       _routeDestination = null;
       _pickStartOnMap = false;
       _routeNavActive = false;
       _routeProgressIndex = 0;
+      _followedRouteDetail = null;
+      _resetNavSession();
+      _resetRerouteState();
     });
   }
 
+  void _resetNavSession() {
+    _navSessionStartedAt = null;
+    _navSessionTotalMeters = null;
+    _completionHandled = false;
+  }
+
+  void _resetRerouteState() {
+    _isRerouting = false;
+    _lastRerouteAt = null;
+    _offRouteStreak = 0;
+  }
+
+  double _routeLengthMeters(List<LatLng> pts) {
+    if (pts.length < 2) return 0;
+    final dist = const Distance();
+    var sum = 0.0;
+    for (var i = 0; i < pts.length - 1; i++) {
+      sum += dist.as(LengthUnit.Meter, pts[i], pts[i + 1]);
+    }
+    return sum;
+  }
+
+  bool _isNearRouteFinish() {
+    final pts = _routePoints;
+    if (pts == null || pts.length < 2) return false;
+    return _remainingRouteMeters(pts, _routeProgressIndex) <= _finishRadiusM;
+  }
+
   void _stopRouteNavigation() {
-    setState(() {
-      _routeNavActive = false;
-    });
+    _handleNavigationEnd(reachedFinish: _isNearRouteFinish());
+  }
+
+  Future<void> _handleNavigationEnd({required bool reachedFinish}) async {
+    if (_completionHandled) return;
+
+    final startedAt = _navSessionStartedAt;
+    final pts = _routePoints;
+    if (startedAt == null || pts == null || pts.length < 2) {
+      setState(() => _routeNavActive = false);
+      _resetNavSession();
+      return;
+    }
+
+    final totalM = _navSessionTotalMeters ?? _routeLengthMeters(pts);
+    final remainingM = _remainingRouteMeters(pts, _routeProgressIndex);
+    final traveledM = math.max(0, totalM - remainingM);
+    final duration = DateTime.now().difference(startedAt);
+
+    final meaningfulSession = reachedFinish ||
+        duration >= _minSessionForSummary ||
+        traveledM >= _minTraveledMForSummary;
+
+    _completionHandled = true;
+    if (mounted) {
+      setState(() => _routeNavActive = false);
+    }
+
+    if (!meaningfulSession) {
+      _resetNavSession();
+      return;
+    }
+
+    final route = _followedRouteDetail?.route;
+    final title = route?.title ??
+        'Похід ${startedAt.day}.${startedAt.month}.${startedAt.year}';
+    final distanceKm = math.max(traveledM / 1000, 0.01);
+    final durationHours = math.max(duration.inSeconds / 3600.0, 0.05);
+
+    final summary = HikeSessionSummary(
+      routeId: widget.routeIdToFollow ?? route?.id,
+      title: title,
+      distanceKm: distanceKm,
+      durationHours: durationHours,
+      suggestedAscentM: route?.ascentM,
+      reachedFinish: reachedFinish,
+    );
+
+    _resetNavSession();
+
+    if (!mounted) return;
+    await showHikeCompletionFlow(context, summary);
+  }
+
+  void _checkAutoRouteCompletion() {
+    if (!_routeNavActive || _completionHandled) return;
+    if (_isNearRouteFinish()) {
+      _handleNavigationEnd(reachedFinish: true);
+    }
   }
 
   Future<void> _startRouteNavigation() async {
@@ -210,6 +335,9 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     setState(() {
       _routeNavActive = true;
       _routeProgressIndex = 0;
+      _navSessionStartedAt = DateTime.now();
+      _navSessionTotalMeters = _routeLengthMeters(pts);
+      _completionHandled = false;
     });
 
     try {
@@ -269,10 +397,192 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   String _remainingRouteLabel() {
     final pts = _routePoints;
     if (pts == null || pts.length < 2) return '';
+    if (_isRerouting) return 'Перебудова маршруту…';
+    if (_routeNavActive) {
+      final offM = _distanceToRouteAhead(
+        _lastKnownUserPosition,
+        pts,
+        _routeProgressIndex,
+      );
+      if (offM >= _offRouteThresholdM) {
+        return 'Ви поза маршрутом (~${offM.round()} м) — оновлюємо шлях';
+      }
+    }
     final m = _remainingRouteMeters(pts, _routeProgressIndex);
     if (m >= 1000) return '~ ${(m / 1000).toStringAsFixed(1)} км залишилось';
     if (m <= 0) return 'Фініш поруч';
     return '~ ${m.round()} м залишилось';
+  }
+
+  LatLng? _lastKnownUserPosition;
+
+  /// Відстань від точки до найближчого сегмента маршруту попереду.
+  double _distanceToRouteAhead(
+    LatLng? user,
+    List<LatLng> route,
+    int minIdx,
+  ) {
+    if (user == null || route.length < 2) return 0;
+    final start = minIdx.clamp(0, route.length - 2);
+    var minD = double.infinity;
+    for (var i = start; i < route.length - 1; i++) {
+      minD = math.min(
+        minD,
+        _pointToSegmentMeters(user, route[i], route[i + 1]),
+      );
+    }
+    return minD.isFinite ? minD : 0;
+  }
+
+  double _pointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
+    final dist = const Distance();
+    final total = dist.as(LengthUnit.Meter, a, b);
+    if (total < 1) return dist.as(LengthUnit.Meter, p, a);
+
+    const latScale = 111320.0;
+    final lonScale =
+        111320.0 * math.cos((a.latitude + b.latitude) * math.pi / 360);
+
+    final ax = a.longitude * lonScale;
+    final ay = a.latitude * latScale;
+    final bx = b.longitude * lonScale;
+    final by = b.latitude * latScale;
+    final px = p.longitude * lonScale;
+    final py = p.latitude * latScale;
+
+    final dx = bx - ax;
+    final dy = by - ay;
+    final len2 = dx * dx + dy * dy;
+    var t = len2 <= 0 ? 0.0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = t.clamp(0.0, 1.0);
+
+    final closest = LatLng(
+      (ay + t * dy) / latScale,
+      (ax + t * dx) / lonScale,
+    );
+    return dist.as(LengthUnit.Meter, p, closest);
+  }
+
+  int _nearestIndexOnRoute(LatLng point, List<LatLng> route) {
+    final dist = const Distance();
+    var bestIdx = 0;
+    var bestD = double.infinity;
+    for (var i = 0; i < route.length; i++) {
+      final d = dist.as(LengthUnit.Meter, point, route[i]);
+      if (d < bestD) {
+        bestD = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  List<LatLng> _remainingNavWaypoints(List<LatLng> polyline) {
+    final wps = _navWaypoints;
+    if (wps == null || wps.isEmpty) {
+      return [polyline.last];
+    }
+
+    final remaining = <LatLng>[];
+    for (final wp in wps) {
+      final idx = _nearestIndexOnRoute(wp, polyline);
+      if (idx >= _routeProgressIndex) {
+        remaining.add(wp);
+      }
+    }
+
+    if (remaining.isEmpty) {
+      return [wps.last];
+    }
+
+    final lastWp = wps.last;
+    if (remaining.last != lastWp) {
+      remaining.add(lastWp);
+    }
+    return remaining;
+  }
+
+  Future<void> _maybeRerouteFromPosition(LatLng user) async {
+    if (!_routeNavActive || _isRerouting || _routePoints == null) return;
+
+    final now = DateTime.now();
+    if (_lastRerouteAt != null &&
+        now.difference(_lastRerouteAt!) < _rerouteCooldown) {
+      return;
+    }
+
+    final pts = _routePoints!;
+    final offM = _distanceToRouteAhead(user, pts, _routeProgressIndex);
+    if (offM < _offRouteThresholdM) {
+      _offRouteStreak = 0;
+      return;
+    }
+
+    _offRouteStreak++;
+    final shouldReroute = offM >= _offRouteRerouteImmediatelyM ||
+        _offRouteStreak >= 2;
+    if (!shouldReroute) return;
+
+    var targets = _remainingNavWaypoints(pts);
+    if (targets.isEmpty) return;
+
+    final dist = const Distance();
+    targets = [
+      for (final t in targets)
+        if (dist.as(LengthUnit.Meter, user, t) > 25) t,
+    ];
+    if (targets.isEmpty) {
+      targets = [_remainingNavWaypoints(pts).last];
+    }
+
+    _isRerouting = true;
+    _offRouteStreak = 0;
+    if (mounted) setState(() {});
+
+    try {
+      final traveledM = math.max(
+        0,
+        (_navSessionTotalMeters ?? _routeLengthMeters(pts)) -
+            _remainingRouteMeters(pts, _routeProgressIndex),
+      );
+
+      final newRoute = await _routingRepo.fetchHikingRouteThrough([
+        user,
+        ...targets,
+      ]);
+
+      if (!mounted || !_routeNavActive || newRoute.length < 2) return;
+
+      setState(() {
+        _routePoints = newRoute;
+        _routeProgressIndex = 0;
+        _navSessionTotalMeters =
+            traveledM + _routeLengthMeters(newRoute);
+        _lastRerouteAt = now;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Маршрут перебудовано з вашої позиції'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Не вдалося перебудувати маршрут. Перевірте інтернет.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      _isRerouting = false;
+      if (mounted) setState(() {});
+    }
   }
 
   /// Пройдений шлях (сірий) і залишок (зелений) під час навігації.
@@ -450,8 +760,10 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       }
       setState(() {
         _routePoints = points;
+        _navWaypoints = [from, to];
         _routeLoading = false;
         _pickStartOnMap = false;
+        _resetRerouteState();
       });
       _fitRouteOnMap();
     } catch (e) {
@@ -678,15 +990,19 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
     ref.listen<AsyncValue<Position?>>(locationProvider, (previous, next) {
       next.whenData((pos) {
-        if (!_routeNavActive || pos == null || _routePoints == null) return;
+        if (pos == null) return;
+        _lastKnownUserPosition = LatLng(pos.latitude, pos.longitude);
+        if (!_routeNavActive || _routePoints == null) return;
         final pts = _routePoints!;
-        final user = LatLng(pos.latitude, pos.longitude);
+        final user = _lastKnownUserPosition!;
         final newIdx =
             _nearestForwardRouteIndex(user, pts, _routeProgressIndex);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_routeNavActive) return;
           setState(() => _routeProgressIndex = newIdx);
           _mapController.move(user, _navFollowZoom);
+          _checkAutoRouteCompletion();
+          unawaited(_maybeRerouteFromPosition(user));
         });
       });
     });
@@ -942,7 +1258,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                               ),
                               child: Text(
                                 _routeNavActive
-                                    ? 'Зупинити'
+                                    ? 'Завершити'
                                     : 'Почати навігацію',
                               ),
                             ),
@@ -958,20 +1274,26 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 ),
               ),
             ),
-          if (_routeLoading)
+          if (_routeLoading || _isRerouting)
             Positioned.fill(
               child: Container(
                 color: Colors.black26,
                 alignment: Alignment.center,
-                child: const Card(
+                child: Card(
                   child: Padding(
-                    padding: EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(color: Color(0xFF2E7D32)),
-                        SizedBox(height: 16),
-                        Text('Побудова маршруту…'),
+                        const CircularProgressIndicator(
+                          color: Color(0xFF2E7D32),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _isRerouting
+                              ? 'Перебудова маршруту…'
+                              : 'Побудова маршруту…',
+                        ),
                       ],
                     ),
                   ),

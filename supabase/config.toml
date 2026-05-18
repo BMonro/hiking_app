@@ -1,0 +1,11 @@
+# Мінімальна конфігурація для Edge Functions.
+# Повний init: supabase init (якщо ще не робили).
+
+[functions.ai-chat]
+verify_jwt = true
+
+[functions.recommend-routes]
+verify_jwt = true
+
+[functions.trip-actions]
+verify_jwt = true

@@ -45,6 +45,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Додаток використовує камеру для фото профілю.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Додаток використовує галерею для аватара профілю.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

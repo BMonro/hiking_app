@@ -12,7 +12,7 @@ class RecommendedRoutesSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(personalizedRoutesProvider);
-    final aiOn = ref.watch(aiConfiguredProvider);
+    final source = ref.watch(recommendationSourceProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -32,9 +32,11 @@ class RecommendedRoutesSection extends ConsumerWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    aiOn
-                        ? 'Підбір на основі ШІ-аналізу профілю'
-                        : 'Підбір за вашим профілем (додайте API-ключ для ШІ)',
+                    switch (source) {
+                      'ai' => 'Підбір на основі ШІ (Edge Function)',
+                      'profile' => 'Підбір за вашим профілем (сервер)',
+                      _ => 'Завантаження рекомендацій…',
+                    },
                     style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                   ),
                 ],

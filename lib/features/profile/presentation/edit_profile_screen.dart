@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:go_router/go_router.dart';
+
+import '../data/avatar_storage_service.dart';
 import 'profile_screen.dart';
+import 'widgets/profile_avatar.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key});
@@ -25,7 +28,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   String? _preferredDifficulty;
   bool _isSaving = false;
   File? _selectedImage;
+  String? _existingAvatarUrl;
   final ImagePicker _picker = ImagePicker();
+  final AvatarStorageService _avatarStorage = AvatarStorageService();
 
   @override
   void initState() {
@@ -50,6 +55,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         _preferredDifficulty = data['preferred_difficulty'] as String?;
         _preferredDurationController.text =
             data['preferred_duration_h']?.toString() ?? '';
+        _existingAvatarUrl = data['avatar_url'] as String?;
       });
     }
 
@@ -80,7 +86,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final pickedFile = await _picker.pickImage(source: source);
+      final pickedFile = await _picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        imageQuality: 85,
+      );
       if (pickedFile != null) {
         setState(() {
           _selectedImage = File(pickedFile.path);
@@ -141,42 +151,20 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
 
-      // Upload image if selected (при 403 RLS — залишаємо старий avatar_url)
-      String? avatarUrl;
+      var avatarUrl = _existingAvatarUrl;
       if (_selectedImage != null) {
-        final fileName =
-            '$userId-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg';
         try {
-          await Supabase.instance.client.storage
-              .from('avatars')
-              .upload(fileName, _selectedImage!);
-          avatarUrl = Supabase.instance.client.storage
-              .from('avatars')
-              .getPublicUrl(fileName);
-        } on StorageException {
+          avatarUrl = await _avatarStorage.uploadAvatar(
+            userId: userId,
+            imageFile: _selectedImage!,
+          );
+        } on AvatarUploadException catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Аватар не оновлено: немає доступу до сховища. Налаштуйте бакет avatars у Supabase.',
-                ),
-              ),
+              SnackBar(content: Text('Аватар: ${e.message}')),
             );
           }
-          final existing = await Supabase.instance.client
-              .from('profiles')
-              .select('avatar_url')
-              .eq('id', userId)
-              .maybeSingle();
-          avatarUrl = existing?['avatar_url'] as String?;
         }
-      } else {
-        final existing = await Supabase.instance.client
-            .from('profiles')
-            .select('avatar_url')
-            .eq('id', userId)
-            .maybeSingle();
-        avatarUrl = existing?['avatar_url'] as String?;
       }
 
       await Supabase.instance.client.from('profiles').upsert({
@@ -247,31 +235,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Редагування профілю'),
-        actions: [
-          TextButton(
-            onPressed: _isSaving ? null : _save,
-            child: _isSaving
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ),
-                  )
-                : const Text(
-                    'Зберегти',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-          ),
-        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -279,22 +246,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               // Profile Photo Section
               Stack(
                 children: [
-                  CircleAvatar(
+                  ProfileAvatar(
                     radius: 60,
-                    backgroundColor: const Color(0xFF2E7D32),
-                    backgroundImage: _selectedImage != null
-                        ? FileImage(_selectedImage!)
-                        : null,
-                    child: _selectedImage == null
-                        ? Text(
-                            initials,
-                            style: const TextStyle(
-                              fontSize: 36,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          )
-                        : null,
+                    initials: initials,
+                    localImage: _selectedImage,
+                    imageUrl: _selectedImage == null ? _existingAvatarUrl : null,
                   ),
                   Positioned(
                     bottom: 0,
@@ -481,57 +437,49 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 ),
               ),
 
-              const SizedBox(height: 32),
-
-              // Additional Settings
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Додаткові налаштування',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _SettingsTile(
-                      title: 'Змінити пароль',
-                      icon: Icons.lock_outline,
-                      onTap: () {},
-                    ),
-                    const Divider(height: 24),
-                    _SettingsTile(
-                      title: 'Приватність',
-                      icon: Icons.privacy_tip_outlined,
-                      onTap: () {},
-                    ),
-                    const Divider(height: 24),
-                    _SettingsTile(
-                      title: 'Повідомлення',
-                      icon: Icons.notifications_outlined,
-                      onTap: () {},
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 40),
             ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+          child: FilledButton(
+            onPressed: _isSaving ? null : _save,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor:
+                  const Color(0xFF2E7D32).withValues(alpha: 0.5),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: _isSaving
+                ? const SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.check_rounded),
+                      SizedBox(width: 8),
+                      Text(
+                        'Зберегти зміни',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ),
       ),
@@ -555,58 +503,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-    );
-  }
-}
-
-class _SettingsTile extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _SettingsTile({
-    required this.title,
-    required this.icon,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        hoverColor: Colors.grey.withOpacity(0.08),
-        mouseCursor: SystemMouseCursors.click,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: Colors.grey.shade700, size: 20),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              Icon(Icons.chevron_right, color: Colors.grey.shade400),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

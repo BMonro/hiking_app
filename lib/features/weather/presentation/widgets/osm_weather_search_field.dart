@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -13,8 +14,7 @@ class _WeatherSearchStyle {
   static const border = Color(0xFFE3E7E2);
 }
 
-/// Пошук місця для погоди: debounce + OSM (Nominatim + вершини) + точки з `route_points`.
-/// Логіка як у [OsmRoutePointNameField], без Riverpod на кожен символ.
+/// Пошук місця для погоди: кеш, debounce, спочатку каталог, потім OSM (Україна).
 class OsmWeatherSearchField extends StatefulWidget {
   final TextEditingController controller;
   final ValueChanged<PlaceSuggestion> onPick;
@@ -50,9 +50,15 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
   final FocusNode _focus = FocusNode();
 
   Timer? _debounce;
+  CancelToken? _cancelToken;
   List<_Hit> _hits = const [];
   bool _loading = false;
+  bool _loadingPeaks = false;
+  bool _hideSuggestionsUntilEdit = false;
   int _requestGen = 0;
+
+  static final Map<String, List<_Hit>> _localCache = {};
+  static const _localCacheMax = 40;
 
   @override
   void initState() {
@@ -61,7 +67,9 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
   }
 
   void _onFocusChange() {
-    if (!_focus.hasFocus) {
+    if (_focus.hasFocus) {
+      _hideSuggestionsUntilEdit = false;
+    } else {
       Future<void>.delayed(const Duration(milliseconds: 200), () {
         if (mounted && !_focus.hasFocus) {
           setState(() => _hits = const []);
@@ -73,16 +81,42 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _cancelToken?.cancel('dispose');
     _focus.removeListener(_onFocusChange);
     _focus.dispose();
     super.dispose();
   }
 
   void _scheduleSearch(String raw) {
+    if (_hideSuggestionsUntilEdit) return;
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
+    _debounce = Timer(const Duration(milliseconds: 450), () {
       _runSearch(raw);
     });
+  }
+
+  void _dismissSuggestions() {
+    _debounce?.cancel();
+    _cancelToken?.cancel('pick');
+    _requestGen++;
+    _hideSuggestionsUntilEdit = true;
+    if (mounted) {
+      setState(() {
+        _hits = const [];
+        _loading = false;
+        _loadingPeaks = false;
+      });
+    }
+    _focus.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  static void _cacheHits(String key, List<_Hit> hits) {
+    if (hits.isEmpty) return;
+    if (_localCache.length >= _localCacheMax) {
+      _localCache.remove(_localCache.keys.first);
+    }
+    _localCache[key] = hits;
   }
 
   Future<List<_Hit>> _hitsFromCatalog(String q) async {
@@ -92,7 +126,7 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
           .from('route_points')
           .select('name, latitude, longitude, point_type')
           .ilike('name', '%$q%')
-          .limit(14);
+          .limit(8);
 
       final list = (data as List).whereType<Map>().toList();
       for (final row in list) {
@@ -119,51 +153,25 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
     return out;
   }
 
-  Future<List<_Hit>> _hitsFromOsm(String q) async {
-    try {
-      final osmList = await _osm.search(q);
-      return osmList
-          .map(
-            (r) => _Hit(
-              title: r.primaryLabel,
-              subtitle: r.displayName,
-              icon: r.isPeak ? Icons.terrain : Icons.place_outlined,
-              place: PlaceSuggestion(
-                label: r.primaryLabel,
-                lat: r.lat,
-                lon: r.lon,
-                type: r.isPeak ? 'peak' : 'place',
-              ),
+  List<_Hit> _hitsFromOsmResults(List<OsmPlaceResult> osmList) {
+    return osmList
+        .map(
+          (r) => _Hit(
+            title: r.primaryLabel,
+            subtitle: r.displayName,
+            icon: r.isPeak ? Icons.terrain : Icons.place_outlined,
+            place: PlaceSuggestion(
+              label: r.primaryLabel,
+              lat: r.lat,
+              lon: r.lon,
+              type: r.isPeak ? 'peak' : 'place',
             ),
-          )
-          .toList();
-    } catch (_) {
-      return const [];
-    }
+          ),
+        )
+        .toList();
   }
 
-  Future<void> _runSearch(String raw) async {
-    final q = raw.trim();
-    if (q.length < 3) {
-      if (mounted) {
-        setState(() {
-          _hits = const [];
-          _loading = false;
-        });
-      }
-      return;
-    }
-
-    final gen = ++_requestGen;
-    if (mounted) setState(() => _loading = true);
-
-    final lists = await Future.wait([
-      _hitsFromCatalog(q),
-      _hitsFromOsm(q),
-    ]);
-
-    if (!mounted || gen != _requestGen) return;
-
+  List<_Hit> _mergeHits(List<_Hit> catalog, List<_Hit> osm) {
     final out = <_Hit>[];
     final seen = <String>{};
 
@@ -177,17 +185,99 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
       out.add(h);
     }
 
-    for (final h in lists[0]) {
+    for (final h in catalog) {
       addHit(h);
     }
-    for (final h in lists[1]) {
+    for (final h in osm) {
       addHit(h);
+    }
+    return out.take(16).toList();
+  }
+
+  Future<void> _runSearch(String raw) async {
+    final q = raw.trim();
+    if (q.length < 3) {
+      _cancelToken?.cancel('short_query');
+      if (mounted) {
+        setState(() {
+          _hits = const [];
+          _loading = false;
+        });
+      }
+      return;
     }
 
+    final cacheKey = q.toLowerCase();
+    final cached = _localCache[cacheKey];
+    if (cached != null) {
+      if (!_hideSuggestionsUntilEdit && mounted) {
+        setState(() {
+          _hits = cached;
+          _loading = false;
+          _loadingPeaks = false;
+        });
+      }
+      return;
+    }
+
+    final gen = ++_requestGen;
+    _cancelToken?.cancel('new_search');
+    _cancelToken = CancelToken();
+    final token = _cancelToken!;
+
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadingPeaks = false;
+      });
+    }
+
+    var catalogHits = <_Hit>[];
+    var placeHits = <_Hit>[];
+
+    try {
+      await Future.wait([
+        _hitsFromCatalog(q)
+            .timeout(const Duration(seconds: 2), onTimeout: () => const [])
+            .then((v) => catalogHits = v)
+            .catchError((_) => const <_Hit>[]),
+        _osm
+            .searchForWeatherPlaces(q, cancelToken: token)
+            .timeout(const Duration(seconds: 8), onTimeout: () => const [])
+            .then((v) => placeHits = _hitsFromOsmResults(v))
+            .catchError((_) => const <_Hit>[]),
+      ]).timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      // Показуємо те, що встигло завантажитись.
+    }
+
+    if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;
+
+    var merged = _mergeHits(catalogHits, placeHits);
     setState(() {
-      _hits = out.take(18).toList();
+      _hits = merged;
       _loading = false;
+      _loadingPeaks = true;
     });
+
+    // Вершини та рідкісні назви — догружаємо без блокування першого екрану.
+    try {
+      final peaks = await _osm
+          .searchForWeatherPeaks(q, cancelToken: token)
+          .timeout(const Duration(seconds: 9), onTimeout: () => const []);
+      if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;
+      final peakHits = _hitsFromOsmResults(peaks);
+      merged = _mergeHits(merged, peakHits);
+      _cacheHits(cacheKey, merged);
+      setState(() {
+        _hits = merged;
+        _loadingPeaks = false;
+      });
+    } catch (_) {
+      if (!mounted || gen != _requestGen) return;
+      _cacheHits(cacheKey, merged);
+      setState(() => _loadingPeaks = false);
+    }
   }
 
   static String _dbPointSubtitle(String pt) {
@@ -217,9 +307,8 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
   }
 
   void _apply(_Hit hit) {
+    _dismissSuggestions();
     widget.onPick(hit.place);
-    widget.controller.text = hit.place.label;
-    setState(() => _hits = const []);
   }
 
   @override
@@ -231,17 +320,22 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
           controller: widget.controller,
           focusNode: _focus,
           decoration: InputDecoration(
-            hintText: 'Назва або пошук у OpenStreetMap…',
+            hintText: 'Місто, село або вершина…',
             prefixIcon: const Icon(Icons.search),
             filled: true,
             fillColor: _WeatherSearchStyle.surface,
-            suffixIcon: _loading
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
+            suffixIcon: _loading || _loadingPeaks
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
                     child: SizedBox(
                       width: 22,
                       height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _loadingPeaks && !_loading
+                            ? Colors.grey
+                            : null,
+                      ),
                     ),
                   )
                 : Icon(Icons.search, color: Colors.grey[600]),
@@ -261,11 +355,23 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
           onSubmitted: (value) {
             final v = value.trim();
             if (v.isEmpty) return;
+            _dismissSuggestions();
             widget.onPick(
               PlaceSuggestion(label: v, lat: null, lon: null, type: null),
             );
           },
         ),
+        if (!_loading &&
+            !_loadingPeaks &&
+            widget.controller.text.trim().length >= 3 &&
+            _hits.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Нічого не знайдено. Спробуйте повну назву або натисніть Enter.',
+              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            ),
+          ),
         if (_hits.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -324,7 +430,7 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
           ),
         const SizedBox(height: 6),
         Text(
-          '© OSM (Nominatim + вершини) та точки з ваших маршрутів. Мін. 3 символи.',
+          'Каталог + OpenStreetMap. Мін. 3 символи.',
           style: TextStyle(fontSize: 11, color: Colors.grey[600]),
         ),
       ],

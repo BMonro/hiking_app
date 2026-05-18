@@ -36,11 +36,19 @@ class RouteModel {
     'combined',
   ];
 
+  static const List<String> storedDifficultyKeys = ['easy', 'medium', 'hard'];
+
   /// Нормалізація значення з БД / форми.
   static String normalizeStoredRouteType(dynamic raw) {
     final s = raw?.toString().trim().toLowerCase() ?? '';
     if (s.isEmpty) return 'linear';
     return storedRouteTypeKeys.contains(s) ? s : 'linear';
+  }
+
+  static String normalizeDifficulty(dynamic raw) {
+    final s = raw?.toString().trim().toLowerCase() ?? '';
+    if (s.isEmpty) return 'easy';
+    return storedDifficultyKeys.contains(s) ? s : 'easy';
   }
 
   static String labelUkForRouteType(String key) {
@@ -60,7 +68,7 @@ class RouteModel {
       id: json['id'] as String,
       title: json['title'] as String,
       routeType: normalizeStoredRouteType(json['route_type']),
-      difficulty: json['difficulty'] as String? ?? 'easy',
+      difficulty: normalizeDifficulty(json['difficulty']),
       distanceKm: (json['distance_km'] as num?)?.toDouble() ?? 0,
       ascentM: (json['ascent_m'] as num?)?.toInt() ?? 0,
       durationH: (json['duration_h'] as num?)?.toDouble() ?? 0,

@@ -49,6 +49,24 @@ class RoutesRepository {
     return routes;
   }
 
+  /// Легкий запит лише для рекомендацій на головній (без другого повного getRoutes).
+  Future<List<RouteModel>> getRoutesByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    final data = await _client
+        .from('routes')
+        .select()
+        .inFilter('id', ids)
+        .eq('is_public', true);
+    final routes = (data as List)
+        .map((json) => RouteModel.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+    final order = {for (var i = 0; i < ids.length; i++) ids[i]: i};
+    routes.sort(
+      (a, b) => (order[a.id] ?? 999).compareTo(order[b.id] ?? 999),
+    );
+    return routes;
+  }
+
   Future<RouteDetail?> getRouteDetail(String routeId) async {
     final row = await _client
         .from('routes')

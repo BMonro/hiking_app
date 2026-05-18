@@ -4,61 +4,60 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/chat_message.dart';
 import '../ai_providers.dart';
 
+/// Картка ШІ-чату: повідомлення + поле вводу внизу.
 class AiChatPanel extends ConsumerStatefulWidget {
-  const AiChatPanel({super.key});
+  const AiChatPanel({
+    super.key,
+    this.scrollController,
+    this.onMessagesChanged,
+  });
+
+  final ScrollController? scrollController;
+  final VoidCallback? onMessagesChanged;
 
   @override
   ConsumerState<AiChatPanel> createState() => _AiChatPanelState();
 }
 
 class _AiChatPanelState extends ConsumerState<AiChatPanel> {
-  final _controller = TextEditingController();
-  final _scrollController = ScrollController();
-  bool _sending = false;
+  ScrollController? _ownedScroll;
+
+  ScrollController get _scroll =>
+      widget.scrollController ?? (_ownedScroll ??= ScrollController());
 
   @override
   void dispose() {
-    _controller.dispose();
-    _scrollController.dispose();
+    _ownedScroll?.dispose();
     super.dispose();
   }
 
-  void _scrollToEnd() {
+  void scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
+      if (!_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      if (max <= 0) return;
+      _scroll.jumpTo(max);
     });
-  }
-
-  Future<void> _send() async {
-    final text = _controller.text;
-    if (text.trim().isEmpty || _sending) return;
-    _controller.clear();
-    setState(() => _sending = true);
-    try {
-      await ref.read(aiChatProvider.notifier).send(text);
-      _scrollToEnd();
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final messages = ref.watch(aiChatProvider);
-    final notifier = ref.read(aiChatProvider.notifier);
-    final aiOn = ref.watch(aiConfiguredProvider);
+    final sending = ref.watch(aiChatSendingProvider);
+    final configuredAsync = ref.watch(aiConfiguredProvider);
 
-    ref.listen(aiChatProvider, (_, __) => _scrollToEnd());
+    ref.listen(aiChatProvider, (prev, next) {
+      if (prev?.length != next.length) {
+        scrollToEnd();
+        widget.onMessagesChanged?.call();
+      }
+    });
 
-    return Container(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE0E8E4)),
         boxShadow: [
           BoxShadow(
@@ -70,6 +69,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
@@ -99,11 +99,31 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                           fontSize: 16,
                         ),
                       ),
-                      Text(
-                        aiOn ? 'ШІ-чат увімкнено' : 'Локальні поради + підбір маршрутів',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
+                      configuredAsync.when(
+                        loading: () => Text(
+                          'Перевірка підключення…',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        error: (_, __) => Text(
+                          'Статус ШІ невідомий',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        data: (ready) => Text(
+                          ready
+                              ? 'Запитайте пораду — відповідь з сервера'
+                              : 'Потрібен OPENAI_API_KEY у Supabase Secrets',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: ready
+                                ? Colors.grey[600]
+                                : const Color(0xFFE65100),
+                          ),
                         ),
                       ),
                     ],
@@ -111,7 +131,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                 ),
                 IconButton(
                   tooltip: 'Очистити чат',
-                  onPressed: () => notifier.clear(),
+                  onPressed: () => ref.read(aiChatProvider.notifier).clear(),
                   icon: Icon(Icons.refresh, color: Colors.grey[600], size: 20),
                 ),
               ],
@@ -121,71 +141,174 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
           SizedBox(
             height: 260,
             child: ListView.builder(
-              controller: _scrollController,
+              controller: _scroll,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              itemCount: messages.length,
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+              itemCount: messages.length + (sending ? 1 : 0),
               itemBuilder: (context, index) {
+                if (sending && index == messages.length) {
+                  return const _TypingBubble();
+                }
                 return _ChatBubble(message: messages[index]);
               },
             ),
           ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    minLines: 1,
-                    maxLines: 3,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: _sending ? null : (_) => _send(),
-                    decoration: InputDecoration(
-                      hintText: 'Запитайте про похід…',
-                      filled: true,
-                      fillColor: const Color(0xFFF5F7F6),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                    ),
-                  ),
+          const Divider(height: 1, color: Color(0xFFE0E8E4)),
+          _ChatInputBar(scrollController: _scroll),
+        ],
+      ),
+    ),
+    );
+  }
+}
+
+class _ChatInputBar extends ConsumerStatefulWidget {
+  const _ChatInputBar({required this.scrollController});
+
+  final ScrollController scrollController;
+
+  @override
+  ConsumerState<_ChatInputBar> createState() => _ChatInputBarState();
+}
+
+class _ChatInputBarState extends ConsumerState<_ChatInputBar> {
+  final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _scrollChatToEnd() {
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!scroll.hasClients) return;
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+    });
+  }
+
+  Future<void> _send() async {
+    final text = _controller.text;
+    final sending = ref.read(aiChatSendingProvider);
+    if (text.trim().isEmpty || sending) return;
+    _controller.clear();
+    await ref.read(aiChatProvider.notifier).send(text);
+    _scrollChatToEnd();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sending = ref.watch(aiChatSendingProvider);
+    final configuredAsync = ref.watch(aiConfiguredProvider);
+    final aiReady = configuredAsync.maybeWhen(
+      data: (v) => v,
+      orElse: () => true,
+    );
+
+    return Container(
+      color: const Color(0xFFFAFCFA),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (sending || !aiReady) ? null : (_) => _send(),
+              decoration: InputDecoration(
+                hintText: aiReady
+                    ? 'Запитайте про похід…'
+                    : 'ШІ не налаштовано на сервері',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: const BorderSide(color: Color(0xFFE0E8E4)),
                 ),
-                const SizedBox(width: 8),
-                Material(
-                  color: const Color(0xFF2E7D32),
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: _sending ? null : _send,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: _sending
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(
-                              Icons.send_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                    ),
-                  ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: const BorderSide(color: Color(0xFFE0E8E4)),
                 ),
-              ],
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: const Color(0xFF2E7D32),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: (sending || !aiReady) ? null : _send,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: sending
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.send_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TypingBubble extends StatelessWidget {
+  const _TypingBubble();
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F4F2),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'Думаю…',
+              style: TextStyle(color: Colors.grey[700], fontSize: 14),
+            ),
+          ],
+        ),
       ),
     );
   }

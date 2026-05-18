@@ -4,17 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../routes/domain/route_model.dart';
-
-String _formatTripDateRange(Map<String, dynamic>? trip) {
-  if (trip == null) return '';
-  final s = trip['start_date'];
-  final e = trip['end_date'];
-  if (s == null) return '';
-  final sd = s.toString().split('T').first;
-  final ed = e?.toString().split('T').first;
-  if (ed == null || ed == sd) return sd;
-  return '$sd — $ed';
-}
+import '../data/trips_api.dart';
+import 'trips_providers.dart';
 
 String _fitnessLevelUa(String? v) {
   return switch (v) {
@@ -31,22 +22,30 @@ String _profileDisplayName(Map<String, dynamic>? prof) {
   return n != null && n.isNotEmpty ? n : 'Учасник';
 }
 
-final groupHikesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
-  final data = await Supabase.instance.client
-      .from('trips')
-      .select('*, routes(id, title, difficulty, distance_km, route_type), trip_participants(user_id, status)')
-      .order('created_at', ascending: false);
-  return List<Map<String, dynamic>>.from(data);
-});
-
-final groupHikeFilterProvider = StateProvider<String>((ref) => 'all');
-final groupHikeSearchProvider = StateProvider<String>((ref) => '');
-
 class GroupHikesScreen extends ConsumerWidget {
   const GroupHikesScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(tripsRealtimeSyncProvider);
+
+    ref.listen<Map<String, dynamic>?>(tripInAppNotificationProvider, (prev, next) {
+      if (next == null || !context.mounted) return;
+      final title = next['title']?.toString() ?? 'Сповіщення';
+      final body = next['body']?.toString();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(body != null && body.isNotEmpty ? '$title\n$body' : title),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'OK',
+            onPressed: () {},
+          ),
+        ),
+      );
+      ref.read(tripInAppNotificationProvider.notifier).state = null;
+    });
+
     final tripsAsync = ref.watch(groupHikesProvider);
     final filter = ref.watch(groupHikeFilterProvider);
     final search = ref.watch(groupHikeSearchProvider).trim().toLowerCase();
@@ -470,7 +469,7 @@ class GroupHikesScreen extends ConsumerWidget {
                               .eq('id', editingTrip['id']);
                         } else {
                           final code = 'TRIP-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
-                          final inserted = await Supabase.instance.client
+                          await Supabase.instance.client
                               .from('trips')
                               .insert({
                                 ...payload,
@@ -481,11 +480,7 @@ class GroupHikesScreen extends ConsumerWidget {
                               .select('id')
                               .single();
 
-                          await Supabase.instance.client.from('trip_participants').upsert({
-                            'trip_id': inserted['id'],
-                            'user_id': userId,
-                            'status': 'approved',
-                          });
+                          // Організатор як approved — тригер trip_organizer_participant (SQL).
                         }
 
                         ref.invalidate(groupHikesProvider);
@@ -572,7 +567,7 @@ class _FilterPill extends ConsumerWidget {
   }
 }
 
-class _TripCard extends StatelessWidget {
+class _TripCard extends ConsumerWidget {
   final Map<String, dynamic> trip;
   final VoidCallback onRefresh;
   final VoidCallback onEdit;
@@ -584,7 +579,7 @@ class _TripCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final startDate = DateTime.parse(trip['start_date']);
     final endDate = DateTime.parse(trip['end_date']);
     final userId = Supabase.instance.client.auth.currentUser!.id;
@@ -724,7 +719,8 @@ class _TripCard extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: 'Керування заявками',
-                    onPressed: () => _showManageRequests(context, trip['id'].toString()),
+                    onPressed: () =>
+                        _showManageRequests(context, ref, trip['id'].toString()),
                     icon: const Icon(Icons.manage_accounts_outlined),
                   ),
                 ] else ...[
@@ -834,60 +830,7 @@ class _TripCard extends StatelessWidget {
       return;
     }
     try {
-      final userId = Supabase.instance.client.auth.currentUser!.id;
-      await Supabase.instance.client.from('trip_participants').upsert({
-        'trip_id': tripId,
-        'user_id': userId,
-        'status': 'pending',
-      });
-
-      try {
-        final tripRow = await Supabase.instance.client
-            .from('trips')
-            .select('title, start_date, end_date')
-            .eq('id', tripId)
-            .maybeSingle();
-        final me = await Supabase.instance.client
-            .from('profiles')
-            .select('full_name, age, fitness_level, bio')
-            .eq('id', userId)
-            .maybeSingle();
-        final applicantName = (me?['full_name'] as String?)?.trim();
-        final name =
-            applicantName != null && applicantName.isNotEmpty
-                ? applicantName
-                : 'Учасник';
-        final tripTitle = (tripRow?['title'] as String?)?.trim() ?? 'Похід';
-        final dates = _formatTripDateRange(tripRow);
-        final age = me?['age'];
-        final fit = _fitnessLevelUa(me?['fitness_level'] as String?);
-        final bio = (me?['bio'] as String?)?.trim() ?? '';
-        final bioShort =
-            bio.length > 120 ? '${bio.substring(0, 120)}…' : bio;
-
-        final detailLines = <String>[
-          'Похід: $tripTitle',
-          if (dates.isNotEmpty) 'Дати: $dates',
-          if (age != null) 'Вік: $age',
-          'Рівень: $fit',
-          if (bioShort.isNotEmpty) 'Про себе: $bioShort',
-        ];
-
-        await Supabase.instance.client.from('notifications').insert({
-          'user_id': organizerId,
-          'type': 'trip_request',
-          'title': 'Заявка від $name',
-          'body': detailLines.join('\n'),
-          'payload': {
-            'trip_id': tripId,
-            'applicant_id': userId,
-            'applicant_name': name,
-            'trip_title': tripTitle,
-          },
-        });
-      } catch (_) {
-        // RLS на notifications може відхилити вставку — заявка вже збережена
-      }
+      await TripsApi().applyToTrip(tripId);
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -895,6 +838,12 @@ class _TripCard extends StatelessWidget {
         );
       }
       onRefresh();
+    } on TripsApiException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -906,16 +855,19 @@ class _TripCard extends StatelessWidget {
 
   Future<void> _cancelTrip(BuildContext context, String tripId) async {
     try {
-      await Supabase.instance.client
-          .from('trips')
-          .update({'status': 'cancelled'})
-          .eq('id', tripId);
+      await TripsApi().cancelTrip(tripId);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Похід скасовано')),
         );
       }
       onRefresh();
+    } on TripsApiException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -925,189 +877,38 @@ class _TripCard extends StatelessWidget {
     }
   }
 
-  Future<void> _showManageRequests(BuildContext context, String tripId) async {
-    final pending = await Supabase.instance.client
-        .from('trip_participants')
-        .select()
-        .eq('trip_id', tripId)
-        .eq('status', 'pending');
-    final pendingList = List<Map<String, dynamic>>.from(pending);
-    final applicantIds = pendingList
-        .map((p) => p['user_id']?.toString())
-        .whereType<String>()
-        .toList();
-    final profileById = <String, Map<String, dynamic>>{};
-    if (applicantIds.isNotEmpty) {
-      final profs = await Supabase.instance.client
-          .from('profiles')
-          .select('id, full_name, age, fitness_level, bio')
-          .inFilter('id', applicantIds);
-      for (final p in List<Map<String, dynamic>>.from(profs)) {
-        final id = p['id']?.toString();
-        if (id == null) continue;
-        profileById[id] = p;
-      }
-    }
-
+  void _showManageRequests(
+    BuildContext context,
+    WidgetRef ref,
+    String tripId,
+  ) {
     if (!context.mounted) return;
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
       showDragHandle: true,
-      builder: (context) {
-        if (pendingList.isEmpty) {
-          return const SizedBox(
-            height: 140,
-            child: Center(child: Text('Немає запитів у черзі')),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: pendingList.length,
-          itemBuilder: (context, index) {
-            final request = pendingList[index];
-            final applicantId = request['user_id'].toString();
-            final prof = profileById[applicantId];
-            final displayName = _profileDisplayName(prof);
-            final age = prof?['age'];
-            final fit = _fitnessLevelUa(prof?['fitness_level'] as String?);
-            final bio = (prof?['bio'] as String?)?.trim() ?? '';
-            return Card(
-              child: ListTile(
-                isThreeLine: bio.isNotEmpty,
-                title: Text(
-                  displayName,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      [
-                        if (age != null) 'Вік: $age',
-                        'Підготовка: $fit',
-                      ].join(' · '),
-                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                    ),
-                    if (bio.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        bio,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ],
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.red),
-                      onPressed: () => _resolveRequest(
-                        context,
-                        tripId: tripId,
-                        applicantId: applicantId,
-                        approved: false,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.check, color: Color(0xFF2E7D32)),
-                      onPressed: () => _resolveRequest(
-                        context,
-                        tripId: tripId,
-                        applicantId: applicantId,
-                        approved: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      isScrollControlled: true,
+      builder: (context) => _ManageTripRequestsSheet(
+        tripId: tripId,
+        onResolved: onRefresh,
+      ),
     );
   }
 
-  Future<void> _resolveRequest(
+  static Future<void> _resolveRequestStatic(
     BuildContext context, {
+    WidgetRef? ref,
     required String tripId,
     required String applicantId,
     required bool approved,
+    required VoidCallback onResolved,
   }) async {
     try {
-      if (approved) {
-        final tripRow = await Supabase.instance.client
-            .from('trips')
-            .select('max_members')
-            .eq('id', tripId)
-            .maybeSingle();
-        final maxM = (tripRow?['max_members'] as num?)?.toInt() ?? 0;
-        final parts = await Supabase.instance.client
-            .from('trip_participants')
-            .select('status')
-            .eq('trip_id', tripId);
-        final approvedN = List<Map<String, dynamic>>.from(parts)
-            .where((p) => p['status'] == 'approved')
-            .length;
-        if (approvedN >= maxM) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Досягнуто максимум учасників — спочатку звільніть місце'),
-              ),
-            );
-          }
-          return;
-        }
-      }
-
-      final status = approved ? 'approved' : 'rejected';
-      await Supabase.instance.client
-          .from('trip_participants')
-          .update({'status': status})
-          .eq('trip_id', tripId)
-          .eq('user_id', applicantId);
-
-      try {
-        final tripRow = await Supabase.instance.client
-            .from('trips')
-            .select('title, organizer_id')
-            .eq('id', tripId)
-            .maybeSingle();
-        final tripTitle =
-            (tripRow?['title'] as String?)?.trim() ?? 'Похід';
-        final orgId = tripRow?['organizer_id']?.toString();
-        String organizerLabel = 'Організатор';
-        if (orgId != null) {
-          final orgProf = await Supabase.instance.client
-              .from('profiles')
-              .select('full_name')
-              .eq('id', orgId)
-              .maybeSingle();
-          final on = (orgProf?['full_name'] as String?)?.trim();
-          if (on != null && on.isNotEmpty) organizerLabel = on;
-        }
-
-        await Supabase.instance.client.from('notifications').insert({
-          'user_id': applicantId,
-          'type': approved ? 'trip_approved' : 'trip_rejected',
-          'title': approved
-              ? 'Вас схвалено: $tripTitle'
-              : 'Заявку відхилено: $tripTitle',
-          'body': approved
-              ? 'Організатор $organizerLabel додав вас до походу «$tripTitle». Відкрийте чат групи для спілкування.'
-              : 'Організатор $organizerLabel відхилив запит на похід «$tripTitle».',
-          'payload': {
-            'trip_id': tripId,
-            'organizer_name': organizerLabel,
-            'trip_title': tripTitle,
-          },
-        });
-      } catch (_) {}
+      await TripsApi().decideParticipant(
+        tripId: tripId,
+        applicantId: applicantId,
+        approved: approved,
+      );
 
       if (context.mounted) {
         Navigator.pop(context);
@@ -1115,7 +916,14 @@ class _TripCard extends StatelessWidget {
           SnackBar(content: Text(approved ? 'Учасника додано' : 'Запит відхилено')),
         );
       }
-      onRefresh();
+      onResolved();
+      ref?.invalidate(pendingTripRequestsProvider(tripId));
+    } on TripsApiException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1154,6 +962,139 @@ class _TripStatusInfo {
   final Color color;
 
   const _TripStatusInfo(this.label, this.color);
+}
+
+class _ManageTripRequestsSheet extends ConsumerWidget {
+  const _ManageTripRequestsSheet({
+    required this.tripId,
+    required this.onResolved,
+  });
+
+  final String tripId;
+  final VoidCallback onResolved;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(tripsRealtimeSyncProvider);
+    final pendingAsync = ref.watch(pendingTripRequestsProvider(tripId));
+
+    return pendingAsync.when(
+      loading: () => const SizedBox(
+        height: 140,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => SizedBox(
+        height: 140,
+        child: Center(child: Text('Помилка: $e')),
+      ),
+      data: (pendingList) {
+        if (pendingList.isEmpty) {
+          return const SizedBox(
+            height: 140,
+            child: Center(child: Text('Немає запитів у черзі')),
+          );
+        }
+
+        return FutureBuilder<Map<String, Map<String, dynamic>>>(
+          future: _loadProfiles(pendingList),
+          builder: (context, profSnap) {
+            final profileById = profSnap.data ?? {};
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              shrinkWrap: true,
+              itemCount: pendingList.length,
+              itemBuilder: (context, index) {
+                final request = pendingList[index];
+                final applicantId = request['user_id'].toString();
+                final prof = profileById[applicantId];
+                final displayName = _profileDisplayName(prof);
+                final age = prof?['age'];
+                final fit = _fitnessLevelUa(prof?['fitness_level'] as String?);
+                final bio = (prof?['bio'] as String?)?.trim() ?? '';
+                return Card(
+                  child: ListTile(
+                    isThreeLine: bio.isNotEmpty,
+                    title: Text(
+                      displayName,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          [
+                            if (age != null) 'Вік: $age',
+                            'Підготовка: $fit',
+                          ].join(' · '),
+                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                        ),
+                        if (bio.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            bio,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ],
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.red),
+                          onPressed: () => _TripCard._resolveRequestStatic(
+                            context,
+                            ref: ref,
+                            tripId: tripId,
+                            applicantId: applicantId,
+                            approved: false,
+                            onResolved: onResolved,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.check, color: Color(0xFF2E7D32)),
+                          onPressed: () => _TripCard._resolveRequestStatic(
+                            context,
+                            ref: ref,
+                            tripId: tripId,
+                            applicantId: applicantId,
+                            approved: true,
+                            onResolved: onResolved,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadProfiles(
+    List<Map<String, dynamic>> pendingList,
+  ) async {
+    final applicantIds = pendingList
+        .map((p) => p['user_id']?.toString())
+        .whereType<String>()
+        .toList();
+    if (applicantIds.isEmpty) return {};
+    final profs = await Supabase.instance.client
+        .from('profiles')
+        .select('id, full_name, age, fitness_level, bio')
+        .inFilter('id', applicantIds);
+    final profileById = <String, Map<String, dynamic>>{};
+    for (final p in List<Map<String, dynamic>>.from(profs)) {
+      final id = p['id']?.toString();
+      if (id != null) profileById[id] = p;
+    }
+    return profileById;
+  }
 }
 
 extension _FirstWhereOrNullExtension<T> on Iterable<T> {

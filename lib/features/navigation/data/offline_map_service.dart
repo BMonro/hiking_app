@@ -7,7 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../routes/domain/route_detail.dart';
-import '../../routes/domain/route_model.dart';
+import '../domain/offline_map_package.dart';
 
 class OfflineMapDownloadProgress {
   final int completed;
@@ -21,6 +21,7 @@ class OfflineMapDownloadProgress {
   double get fraction => total == 0 ? 0 : completed / total;
 }
 
+/// Завантаження та зберігання **тільки картографічних тайлів** OSM.
 class OfflineMapService {
   static const String osmTileUrlTemplate =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -42,6 +43,8 @@ class OfflineMapService {
               ),
             );
 
+  String? _cachedOfflineRoot;
+
   Future<Directory> _routeDir(String routeId) async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory('${base.path}/offline_tiles/$routeId');
@@ -51,9 +54,9 @@ class OfflineMapService {
     return dir;
   }
 
-  Future<File> _metadataFile(String routeId) async {
+  Future<File> _metaFile(String routeId) async {
     final dir = await _routeDir(routeId);
-    return File('${dir.path}/route_detail.json');
+    return File('${dir.path}/map_meta.json');
   }
 
   Future<File> _completeMarker(String routeId) async {
@@ -61,106 +64,87 @@ class OfflineMapService {
     return File('${dir.path}/.complete');
   }
 
+  Future<File> _legacyDetailFile(String routeId) async {
+    final dir = await _routeDir(routeId);
+    return File('${dir.path}/route_detail.json');
+  }
+
   String tileFilePath(String routeId, int z, int x, int y) {
     return '${_offlineRootSync()}/$routeId/$z/$x/$y.png';
   }
 
-  String _offlineRootSync() {
-    // Used only from sync tile provider after the first async lookup.
-    return _cachedOfflineRoot ?? '';
-  }
-
-  String? _cachedOfflineRoot;
+  String _offlineRootSync() => _cachedOfflineRoot ?? '';
 
   Future<void> ensureOfflineRootCached() async {
     _cachedOfflineRoot ??=
         '${(await getApplicationDocumentsDirectory()).path}/offline_tiles';
   }
 
+  /// Карта завантажена повністю (є маркер завершення).
   Future<bool> hasOfflineMap(String routeId) async {
-    if ((await _completeMarker(routeId)).existsSync()) return true;
-    return (await _metadataFile(routeId)).existsSync();
+    return (await _completeMarker(routeId)).existsSync();
   }
 
-  Future<List<RouteDetail>> listDownloadedRoutes() async {
+  Future<List<OfflineMapPackage>> listOfflineMaps() async {
     final base = await getApplicationDocumentsDirectory();
     final root = Directory('${base.path}/offline_tiles');
     if (!await root.exists()) return [];
 
-    final routesById = <String, RouteDetail>{};
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      if (!entity.path.endsWith('route_detail.json')) continue;
+    final packages = <OfflineMapPackage>[];
+    await for (final entity in root.list(followLinks: false)) {
+      if (entity is! Directory) continue;
+      final routeId = entity.path.split(Platform.pathSeparator).last;
+      if (routeId.isEmpty || routeId.startsWith('.')) continue;
 
-      try {
-        final json = jsonDecode(await entity.readAsString());
-        if (json is! Map) continue;
-        final detail = _decodeRouteDetail(Map<String, dynamic>.from(json));
-        routesById[detail.route.id] = detail;
-      } catch (_) {
-        final routeId = _routeIdFromPath(entity.parent.path);
-        if (routeId.isEmpty) continue;
-        routesById.putIfAbsent(
-          routeId,
-          () => RouteDetail(
-            route: RouteModel(
-              id: routeId,
-              title: 'Завантажений маршрут',
-              routeType: 'linear',
-              difficulty: 'easy',
-              distanceKm: 0,
-              ascentM: 0,
-              durationH: 0,
-              description: '',
-              authorId: '',
-              createdAt: DateTime.now(),
-            ),
-            waypoints: const [],
-          ),
-        );
-      }
+      await _migrateLegacyDetailIfNeeded(routeId);
+      final meta = await _readMeta(routeId);
+      if (meta == null) continue;
+      if (!await hasOfflineMap(routeId)) continue;
+
+      final tileCount = await _countTiles(routeId);
+      packages.add(
+        OfflineMapPackage(
+          routeId: meta.routeId,
+          title: meta.title,
+          downloadedAt: meta.downloadedAt,
+          tileCount: tileCount,
+        ),
+      );
     }
 
-    final routes = routesById.values.toList();
-    routes.sort(
-      (a, b) => a.route.title.toLowerCase().compareTo(
-            b.route.title.toLowerCase(),
-          ),
+    packages.sort(
+      (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
     );
-    return routes;
+    return packages;
   }
 
-  Future<RouteDetail?> loadCachedRouteDetail(String routeId) async {
-    final file = await _metadataFile(routeId);
-    if (!await file.exists()) return null;
-    try {
-      final json = jsonDecode(await file.readAsString());
-      if (json is! Map) return null;
-      return _decodeRouteDetail(Map<String, dynamic>.from(json));
-    } catch (_) {
-      return null;
-    }
+  Future<OfflineMapPackage?> getOfflineMap(String routeId) async {
+    if (!await hasOfflineMap(routeId)) return null;
+    await _migrateLegacyDetailIfNeeded(routeId);
+    final meta = await _readMeta(routeId);
+    if (meta == null) return null;
+    return OfflineMapPackage(
+      routeId: meta.routeId,
+      title: meta.title,
+      downloadedAt: meta.downloadedAt,
+      tileCount: await _countTiles(routeId),
+    );
   }
 
-  String _routeIdFromPath(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    final segments = normalized.split('/').where((part) => part.isNotEmpty);
-    if (segments.isEmpty) return '';
-    return segments.last;
-  }
-
+  /// Розмір **тайлів** у МБ (без службових json).
   Future<double> cacheSizeMb(String routeId) async {
     final dir = await _routeDir(routeId);
     if (!await dir.exists()) return 0;
     var bytes = 0;
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is File) {
+      if (entity is File && entity.path.endsWith('.png')) {
         bytes += await entity.length();
       }
     }
     return bytes / (1024 * 1024);
   }
 
+  /// [detail] потрібен лише для обчислення області тайлів; на диск пишуться тайли + map_meta.
   Stream<OfflineMapDownloadProgress> downloadRouteMap(RouteDetail detail) async* {
     final routeId = detail.route.id;
     final points = _collectCoveragePoints(detail);
@@ -208,7 +192,7 @@ class OfflineMapService {
               await file.writeAsBytes(bytes, flush: true);
             }
           } on DioException {
-            // Skip failed tiles; cached tiles remain usable offline.
+            // Пропускаємо невдалі тайли.
           }
           completed++;
         }),
@@ -219,12 +203,23 @@ class OfflineMapService {
       );
     }
 
-    final metadata = await _metadataFile(routeId);
-    await metadata.writeAsString(
-      jsonEncode(_encodeRouteDetail(detail)),
-      flush: true,
+    await _writeMeta(
+      routeId,
+      _MapMeta(
+        routeId: routeId,
+        title: detail.route.title,
+        downloadedAt: DateTime.now(),
+        tileCount: tiles.length,
+      ),
     );
+
     await marker.writeAsString('1', flush: true);
+
+    final legacy = await _legacyDetailFile(routeId);
+    if (await legacy.exists()) {
+      await legacy.delete();
+    }
+
     await ensureOfflineRootCached();
   }
 
@@ -233,6 +228,84 @@ class OfflineMapService {
     if (await dir.exists()) {
       await dir.delete(recursive: true);
     }
+  }
+
+  Future<int> _countTiles(String routeId) async {
+    final dir = await _routeDir(routeId);
+    if (!await dir.exists()) return 0;
+    var count = 0;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File && entity.path.endsWith('.png')) count++;
+    }
+    return count;
+  }
+
+  Future<void> _migrateLegacyDetailIfNeeded(String routeId) async {
+    final legacy = await _legacyDetailFile(routeId);
+    if (!await legacy.exists()) return;
+    final meta = await _metaFile(routeId);
+    if (await meta.exists()) {
+      await legacy.delete();
+      return;
+    }
+    try {
+      final json = jsonDecode(await legacy.readAsString());
+      if (json is Map) {
+        final route = json['route'];
+        final title = route is Map
+            ? route['title']?.toString() ?? 'Офлайн-карта'
+            : 'Офлайн-карта';
+        await _writeMeta(
+          routeId,
+          _MapMeta(
+            routeId: routeId,
+            title: title,
+            downloadedAt: DateTime.now(),
+          ),
+        );
+      }
+    } catch (_) {
+      await _writeMeta(
+        routeId,
+        _MapMeta(routeId: routeId, title: 'Офлайн-карта'),
+      );
+    }
+    await legacy.delete();
+  }
+
+  Future<_MapMeta?> _readMeta(String routeId) async {
+    final file = await _metaFile(routeId);
+    if (!await file.exists()) return null;
+    try {
+      final json = jsonDecode(await file.readAsString());
+      if (json is! Map) return null;
+      final m = Map<String, dynamic>.from(json);
+      return _MapMeta(
+        routeId: m['route_id']?.toString() ?? routeId,
+        title: m['title']?.toString() ?? 'Офлайн-карта',
+        downloadedAt: m['downloaded_at'] != null
+            ? DateTime.tryParse(m['downloaded_at'].toString())
+            : null,
+        tileCount: (m['tile_count'] as num?)?.toInt() ?? 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeMeta(String routeId, _MapMeta meta) async {
+    final file = await _metaFile(routeId);
+    await file.writeAsString(
+      jsonEncode({
+        'route_id': meta.routeId,
+        'title': meta.title,
+        'downloaded_at': meta.downloadedAt?.toIso8601String(),
+        'tile_count': meta.tileCount,
+        'min_zoom': minZoom,
+        'max_zoom': maxZoom,
+      }),
+      flush: true,
+    );
   }
 
   List<LatLng> _collectCoveragePoints(RouteDetail detail) {
@@ -294,93 +367,18 @@ class OfflineMapService {
                 math.pow(2, zoom))
             .floor();
   }
+}
 
-  Map<String, dynamic> _encodeRouteDetail(RouteDetail detail) {
-    return {
-      'route': {
-        'id': detail.route.id,
-        'title': detail.route.title,
-        'route_type': detail.route.routeType,
-        'difficulty': detail.route.difficulty,
-        'distance_km': detail.route.distanceKm,
-        'ascent_m': detail.route.ascentM,
-        'duration_h': detail.route.durationH,
-        'description': detail.route.description,
-        'cover_image_url': detail.route.coverImageUrl,
-        'author_id': detail.route.authorId,
-        'created_at': detail.route.createdAt.toIso8601String(),
-      },
-      'waypoints': detail.waypoints
-          .map(
-            (w) => {
-              'name': w.name,
-              'latitude': w.position.latitude,
-              'longitude': w.position.longitude,
-              'point_type': w.pointType,
-              'sort_order': w.sortOrder,
-              'altitude_m': w.altitudeM,
-            },
-          )
-          .toList(),
-      'polyline': detail.polyline
-          ?.map((p) => [p.latitude, p.longitude])
-          .toList(),
-    };
-  }
+class _MapMeta {
+  final String routeId;
+  final String title;
+  final DateTime? downloadedAt;
+  final int tileCount;
 
-  RouteDetail _decodeRouteDetail(Map<String, dynamic> json) {
-    final routeJson = Map<String, dynamic>.from(json['route'] as Map);
-    final createdAtRaw = routeJson['created_at'];
-    if (createdAtRaw == null) {
-      routeJson['created_at'] = DateTime.now().toIso8601String();
-    } else if (createdAtRaw is! String) {
-      routeJson['created_at'] = createdAtRaw.toString();
-    }
-    final route = RouteModel.fromJson(routeJson);
-    final waypoints = <RouteWaypoint>[];
-    final rawWaypoints = json['waypoints'];
-    if (rawWaypoints is List) {
-      for (final item in rawWaypoints) {
-        if (item is! Map) continue;
-        final m = Map<String, dynamic>.from(item);
-        final lat = (m['latitude'] as num?)?.toDouble();
-        final lon = (m['longitude'] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
-        waypoints.add(
-          RouteWaypoint(
-            name: m['name']?.toString(),
-            position: LatLng(lat, lon),
-            pointType: m['point_type']?.toString() ?? 'start',
-            sortOrder: (m['sort_order'] as num?)?.toInt() ?? 0,
-            altitudeM: (m['altitude_m'] as num?)?.toInt(),
-          ),
-        );
-      }
-    }
-
-    List<LatLng>? polyline;
-    final rawPolyline = json['polyline'];
-    if (rawPolyline is List) {
-      final pts = <LatLng>[];
-      for (final item in rawPolyline) {
-        if (item is List && item.length >= 2) {
-          pts.add(
-            LatLng(
-              (item[0] as num).toDouble(),
-              (item[1] as num).toDouble(),
-            ),
-          );
-        }
-      }
-      if (pts.length >= 2) {
-        polyline = pts;
-      }
-    }
-
-    return RouteDetail(
-      route: route,
-      waypoints: waypoints,
-      polyline: polyline,
-    );
-  }
+  _MapMeta({
+    required this.routeId,
+    required this.title,
+    this.downloadedAt,
+    this.tileCount = 0,
+  });
 }

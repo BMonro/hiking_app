@@ -17,6 +17,7 @@ final durationMaxFilterProvider = StateProvider<double?>((ref) => null);
 final ascentMaxFilterProvider = StateProvider<int?>((ref) => null);
 
 final routesProvider = FutureProvider<List<RouteModel>>((ref) async {
+  ref.keepAlive();
   final repo = ref.watch(routesRepositoryProvider);
   final search = ref.watch(searchQueryProvider);
   final difficulty = ref.watch(difficultyFilterProvider);
@@ -33,6 +34,7 @@ final routesProvider = FutureProvider<List<RouteModel>>((ref) async {
 });
 
 final myRoutesProvider = FutureProvider<List<RouteModel>>((ref) async {
+  ref.keepAlive();
   final repo = ref.watch(routesRepositoryProvider);
   return repo.getMyRoutes();
 });
@@ -40,9 +42,5 @@ final myRoutesProvider = FutureProvider<List<RouteModel>>((ref) async {
 final routeDetailProvider =
     FutureProvider.family<RouteDetail?, String>((ref, routeId) async {
   final repo = ref.watch(routesRepositoryProvider);
-  try {
-    final detail = await repo.getRouteDetail(routeId);
-    if (detail != null) return detail;
-  } catch (_) {}
-  return ref.read(offlineMapServiceProvider).loadCachedRouteDetail(routeId);
+  return repo.getRouteDetail(routeId);
 });

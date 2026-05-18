@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'widgets/auth_form_field.dart';
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -17,6 +19,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isLoading = false;
   bool _isGoogleLoading = false;
   bool _obscurePassword = true;
+  String? _emailError;
+  String? _passwordError;
 
   @override
   void dispose() {
@@ -25,18 +29,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
+  void _clearFieldErrors() {
+    setState(() {
+      _emailError = null;
+      _passwordError = null;
+    });
+  }
+
+  bool _validateForm({required String email, required String password}) {
+    var ok = true;
+    String? emailError;
+    String? passwordError;
+
+    if (email.isEmpty) {
+      emailError = 'Заповніть email';
+      ok = false;
+    } else if (!_isValidEmail(email)) {
+      emailError = 'Введіть коректну електронну пошту';
+      ok = false;
+    }
+
+    if (password.isEmpty) {
+      passwordError = 'Заповніть пароль';
+      ok = false;
+    }
+
+    setState(() {
+      _emailError = emailError;
+      _passwordError = passwordError;
+    });
+    return ok;
+  }
+
   Future<void> _submit() async {
     final email = _normalizeEmail(_emailController.text);
     final password = _passwordController.text;
 
-    if (email.isEmpty || password.isEmpty) {
-      _showError('Заповніть всі поля');
-      return;
-    }
-    if (!_isValidEmail(email)) {
-      _showError('Введіть коректну електронну пошту');
-      return;
-    }
+    _clearFieldErrors();
+    if (!_validateForm(email: email, password: password)) return;
 
     setState(() => _isLoading = true);
 
@@ -47,9 +77,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
       if (mounted) context.go('/home');
     } on AuthException catch (e) {
-      _showError(_mapAuthError(e.message));
+      final msg = _mapAuthError(e.message);
+      final raw = e.message.toLowerCase();
+      setState(() {
+        if (raw.contains('email not confirmed') ||
+            raw.contains('unable to validate email') ||
+            raw.contains('invalid format')) {
+          _emailError = msg;
+        } else if (raw.contains('invalid login credentials')) {
+          _passwordError = msg;
+        } else if (raw.contains('email')) {
+          _emailError = msg;
+        } else {
+          _passwordError = msg;
+        }
+      });
     } catch (_) {
-      _showError('Щось пішло не так. Спробуйте ще раз');
+      setState(() => _passwordError = 'Щось пішло не так. Спробуйте ще раз');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -63,12 +107,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         redirectTo: kIsWeb ? null : 'io.supabase.flutter://login-callback/',
       );
       if (!launched && mounted) {
-        _showError('Не вдалося відкрити сторінку входу Google');
+        _showGlobalError('Не вдалося відкрити сторінку входу Google');
       }
     } on AuthException catch (e) {
-      _showError(_mapAuthError(e.message));
+      _showGlobalError(_mapAuthError(e.message));
     } catch (_) {
-      _showError('Не вдалося увійти через Google');
+      _showGlobalError('Не вдалося увійти через Google');
     } finally {
       if (mounted) setState(() => _isGoogleLoading = false);
     }
@@ -76,8 +120,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _resetPassword() async {
     final email = _normalizeEmail(_emailController.text);
-    if (!_isValidEmail(email)) {
-      _showError('Введіть email для відновлення паролю');
+    _clearFieldErrors();
+    if (email.isEmpty || !_isValidEmail(email)) {
+      setState(() {
+        _emailError = email.isEmpty
+            ? 'Введіть email для відновлення паролю'
+            : 'Введіть коректну електронну пошту';
+      });
       return;
     }
     try {
@@ -93,9 +142,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         );
       }
     } on AuthException catch (e) {
-      _showError(_mapAuthError(e.message));
+      setState(() => _emailError = _mapAuthError(e.message));
     } catch (_) {
-      _showError('Не вдалося надіслати лист для відновлення');
+      setState(
+        () => _emailError = 'Не вдалося надіслати лист для відновлення',
+      );
     }
   }
 
@@ -157,7 +208,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return message;
   }
 
-  void _showError(String message) {
+  void _showGlobalError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -203,21 +254,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 40),
-                  TextField(
+                  AuthFormField(
                     controller: _emailController,
+                    errorText: _emailError,
                     keyboardType: TextInputType.emailAddress,
-                    decoration: InputDecoration(
+                    textInputAction: TextInputAction.next,
+                    onChanged: (_) {
+                      if (_emailError != null) {
+                        setState(() => _emailError = null);
+                      }
+                    },
+                    decoration: const InputDecoration(
                       labelText: 'Email',
-                      prefixIcon: const Icon(Icons.email_outlined),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      prefixIcon: Icon(Icons.email_outlined),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  TextField(
+                  AuthFormField(
                     controller: _passwordController,
+                    errorText: _passwordError,
                     obscureText: _obscurePassword,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _submit(),
+                    onChanged: (_) {
+                      if (_passwordError != null) {
+                        setState(() => _passwordError = null);
+                      }
+                    },
                     decoration: InputDecoration(
                       labelText: 'Пароль',
                       prefixIcon: const Icon(Icons.lock_outlined),
@@ -230,9 +293,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         onPressed: () => setState(
                           () => _obscurePassword = !_obscurePassword,
                         ),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ),

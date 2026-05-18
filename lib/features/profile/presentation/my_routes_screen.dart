@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../routes/domain/route_detail.dart';
+import '../../navigation/domain/offline_map_package.dart';
 import '../../routes/domain/route_model.dart';
 import '../../routes/presentation/offline_route_provider.dart';
 import '../../routes/presentation/routes_provider.dart';
@@ -24,14 +24,14 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_handleTabChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.invalidate(offlineRoutesProvider);
+      ref.invalidate(offlineMapsProvider);
     });
   }
 
   void _handleTabChange() {
     if (_tabController.indexIsChanging) return;
     if (_tabController.index == 1) {
-      ref.invalidate(offlineRoutesProvider);
+      ref.invalidate(offlineMapsProvider);
     }
   }
 
@@ -112,30 +112,30 @@ class _OfflineRoutesTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final offlineAsync = ref.watch(offlineRoutesProvider);
+    final offlineAsync = ref.watch(offlineMapsProvider);
 
     return offlineAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('Помилка: $e')),
-      data: (routes) {
-        if (routes.isEmpty) {
+      data: (maps) {
+        if (maps.isEmpty) {
           return const _EmptyState(
             icon: Icons.offline_pin,
-            title: 'Немає завантажених маршрутів',
+            title: 'Немає завантажених карт',
             subtitle:
-                'На екрані маршруту натисніть «Завантажити для офлайн», щоб зберегти карту на пристрій.',
+                'На екрані маршруту натисніть «Завантажити карту офлайн», щоб зберегти тайли на пристрій.',
           );
         }
 
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          itemCount: routes.length,
+          itemCount: maps.length,
           itemBuilder: (context, index) {
-            final detail = routes[index];
-            return _OfflineRouteCard(
-              detail: detail,
-              onOpen: () => context.push('/routes/detail/${detail.route.id}'),
-              onDelete: () => _deleteOfflineRoute(context, ref, detail.route.id),
+            final mapPkg = maps[index];
+            return _OfflineMapCard(
+              mapPkg: mapPkg,
+              onOpen: () => context.push('/routes/detail/${mapPkg.routeId}'),
+              onDelete: () => _deleteOfflineMap(context, ref, mapPkg.routeId),
             );
           },
         );
@@ -143,7 +143,7 @@ class _OfflineRoutesTab extends ConsumerWidget {
     );
   }
 
-  Future<void> _deleteOfflineRoute(
+  Future<void> _deleteOfflineMap(
     BuildContext context,
     WidgetRef ref,
     String routeId,
@@ -153,7 +153,7 @@ class _OfflineRoutesTab extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         title: const Text('Видалити офлайн-карту'),
         content: const Text(
-          'Завантажені тайли та локальна копія маршруту будуть видалені з пристрою.',
+          'Завантажені тайли карти будуть видалені з пристрою.',
         ),
         actions: [
           TextButton(
@@ -175,7 +175,7 @@ class _OfflineRoutesTab extends ConsumerWidget {
         await ref.read(routesRepositoryProvider).removeOfflineRoute(routeId);
       } catch (_) {}
       ref
-        ..invalidate(offlineRoutesProvider)
+        ..invalidate(offlineMapsProvider)
         ..invalidate(routeOfflineStatusProvider(routeId));
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -276,21 +276,20 @@ class _RouteListCard extends StatelessWidget {
   }
 }
 
-class _OfflineRouteCard extends ConsumerWidget {
-  final RouteDetail detail;
+class _OfflineMapCard extends ConsumerWidget {
+  final OfflineMapPackage mapPkg;
   final VoidCallback onOpen;
   final VoidCallback onDelete;
 
-  const _OfflineRouteCard({
-    required this.detail,
+  const _OfflineMapCard({
+    required this.mapPkg,
     required this.onOpen,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final route = detail.route;
-    final sizeAsync = ref.watch(_offlineRouteSizeProvider(route.id));
+    final sizeAsync = ref.watch(_offlineMapSizeProvider(mapPkg.routeId));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -311,7 +310,7 @@ class _OfflineRouteCard extends ConsumerWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      route.title,
+                      mapPkg.title,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -330,10 +329,10 @@ class _OfflineRouteCard extends ConsumerWidget {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.offline_pin, size: 14, color: Color(0xFF2E7D32)),
+                        Icon(Icons.map_outlined, size: 14, color: Color(0xFF2E7D32)),
                         SizedBox(width: 4),
                         Text(
-                          'Офлайн',
+                          'Карта',
                           style: TextStyle(
                             color: Color(0xFF2E7D32),
                             fontSize: 11,
@@ -345,33 +344,21 @@ class _OfflineRouteCard extends ConsumerWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Icon(Icons.straighten, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${route.distanceKm} км',
-                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
-                  ),
-                  const SizedBox(width: 14),
-                  Icon(Icons.schedule, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${route.durationH.toStringAsFixed(1)} год',
-                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
-                  ),
-                ],
-              ),
               const SizedBox(height: 8),
+              if (mapPkg.tileCount > 0)
+                Text(
+                  'Тайлів: ${mapPkg.tileCount}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              const SizedBox(height: 4),
               sizeAsync.when(
                 loading: () => Text(
-                  'Розмір кешу: ...',
+                  'Розмір карти: ...',
                   style: TextStyle(color: Colors.grey[600], fontSize: 12),
                 ),
                 error: (_, __) => const SizedBox.shrink(),
                 data: (sizeMb) => Text(
-                  'Розмір кешу: ${sizeMb.toStringAsFixed(1)} МБ',
+                  'Розмір карти: ${sizeMb.toStringAsFixed(1)} МБ',
                   style: TextStyle(color: Colors.grey[600], fontSize: 12),
                 ),
               ),
@@ -400,7 +387,7 @@ class _OfflineRouteCard extends ConsumerWidget {
   }
 }
 
-final _offlineRouteSizeProvider =
+final _offlineMapSizeProvider =
     FutureProvider.family<double, String>((ref, routeId) async {
   return ref.watch(offlineMapServiceProvider).cacheSizeMb(routeId);
 });

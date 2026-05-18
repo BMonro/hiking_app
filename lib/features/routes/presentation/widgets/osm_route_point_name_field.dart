@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/osm_nominatim_service.dart';
 
-/// Поле назви точки з підказками з OpenStreetMap (Nominatim).
+/// Поле назви точки з підказками: каталог маршрутів + OpenStreetMap.
 class OsmRoutePointNameField extends StatefulWidget {
   final TextEditingController nameController;
   final TextEditingController latController;
@@ -30,9 +32,15 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
   final FocusNode _focus = FocusNode();
 
   Timer? _debounce;
+  CancelToken? _cancelToken;
   List<OsmPlaceResult> _suggestions = const [];
   bool _loading = false;
+  bool _loadingPeaks = false;
+  bool _hideSuggestionsUntilEdit = false;
   int _requestGen = 0;
+
+  static final Map<String, List<OsmPlaceResult>> _localCache = {};
+  static const _localCacheMax = 40;
 
   @override
   void initState() {
@@ -41,7 +49,9 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
   }
 
   void _onFocusChange() {
-    if (!_focus.hasFocus) {
+    if (_focus.hasFocus) {
+      _hideSuggestionsUntilEdit = false;
+    } else {
       Future<void>.delayed(const Duration(milliseconds: 200), () {
         if (mounted && !_focus.hasFocus) {
           setState(() => _suggestions = const []);
@@ -53,62 +63,174 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _cancelToken?.cancel('dispose');
     _focus.removeListener(_onFocusChange);
     _focus.dispose();
     super.dispose();
   }
 
   void _scheduleSearch(String raw) {
+    if (_hideSuggestionsUntilEdit) return;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 450), () {
       _runSearch(raw);
     });
   }
 
+  void _dismissSuggestions() {
+    _debounce?.cancel();
+    _cancelToken?.cancel('pick');
+    _requestGen++;
+    _hideSuggestionsUntilEdit = true;
+    if (mounted) {
+      setState(() {
+        _suggestions = const [];
+        _loading = false;
+        _loadingPeaks = false;
+      });
+    }
+    _focus.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  static void _cacheSuggestions(String key, List<OsmPlaceResult> list) {
+    if (list.isEmpty) return;
+    if (_localCache.length >= _localCacheMax) {
+      _localCache.remove(_localCache.keys.first);
+    }
+    _localCache[key] = list;
+  }
+
+  Future<List<OsmPlaceResult>> _fromCatalog(String q) async {
+    final out = <OsmPlaceResult>[];
+    try {
+      final data = await Supabase.instance.client
+          .from('route_points')
+          .select('name, latitude, longitude, point_type, altitude_m')
+          .ilike('name', '%$q%')
+          .limit(8);
+
+      for (final row in (data as List).whereType<Map>()) {
+        final label = (row['name']?.toString() ?? '').trim();
+        final lat = (row['latitude'] as num?)?.toDouble();
+        final lon = (row['longitude'] as num?)?.toDouble();
+        final pt = row['point_type']?.toString() ?? 'viewpoint';
+        final alt = row['altitude_m'] as int?;
+        if (lat == null || lon == null || label.isEmpty) continue;
+        out.add(
+          OsmPlaceResult(
+            displayName: 'Точка з каталогу · $pt',
+            primaryLabel: label,
+            lat: lat,
+            lon: lon,
+            elevationM: alt,
+            isPeak: pt == 'peak',
+          ),
+        );
+      }
+    } catch (_) {}
+    return out;
+  }
+
   Future<void> _runSearch(String raw) async {
     final q = raw.trim();
     if (q.length < 3) {
+      _cancelToken?.cancel('short_query');
       if (mounted) {
         setState(() {
           _suggestions = const [];
           _loading = false;
+          _loadingPeaks = false;
+        });
+      }
+      return;
+    }
+
+    final cacheKey = q.toLowerCase();
+    final cached = _localCache[cacheKey];
+    if (cached != null) {
+      if (!_hideSuggestionsUntilEdit && mounted) {
+        setState(() {
+          _suggestions = cached;
+          _loading = false;
+          _loadingPeaks = false;
         });
       }
       return;
     }
 
     final gen = ++_requestGen;
-    if (mounted) setState(() => _loading = true);
+    _cancelToken?.cancel('new_search');
+    _cancelToken = CancelToken();
+    final token = _cancelToken!;
+
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadingPeaks = false;
+      });
+    }
+
+    var catalog = <OsmPlaceResult>[];
+    var places = <OsmPlaceResult>[];
 
     try {
-      final list = await _service.search(q);
-      if (!mounted || gen != _requestGen) return;
+      await Future.wait([
+        _fromCatalog(q)
+            .timeout(const Duration(seconds: 2), onTimeout: () => const [])
+            .then((v) => catalog = v)
+            .catchError((_) => const <OsmPlaceResult>[]),
+        _service
+            .searchForRoutePlaces(q, cancelToken: token)
+            .timeout(const Duration(seconds: 8), onTimeout: () => const [])
+            .then((v) => places = v)
+            .catchError((_) => const <OsmPlaceResult>[]),
+      ]).timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      // Показуємо те, що встигло завантажитись.
+    }
+
+    if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;
+
+    var merged = _service.mergeRouteSuggestions(catalog, places, const []);
+    setState(() {
+      _suggestions = merged;
+      _loading = false;
+      _loadingPeaks = true;
+    });
+
+    try {
+      final peaks = await _service
+          .searchForRoutePeaks(q, cancelToken: token)
+          .timeout(const Duration(seconds: 12), onTimeout: () => const []);
+      if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;
+      merged = _service.mergeRouteSuggestions(catalog, places, peaks);
+      _cacheSuggestions(cacheKey, merged);
       setState(() {
-        _suggestions = list;
-        _loading = false;
+        _suggestions = merged;
+        _loadingPeaks = false;
       });
     } catch (_) {
       if (!mounted || gen != _requestGen) return;
-      setState(() {
-        _suggestions = const [];
-        _loading = false;
-      });
+      _cacheSuggestions(cacheKey, merged);
+      setState(() => _loadingPeaks = false);
     }
   }
 
   void _apply(OsmPlaceResult place) {
+    _dismissSuggestions();
     widget.nameController.text = place.primaryLabel;
     widget.latController.text = place.lat.toStringAsFixed(5);
     widget.lonController.text = place.lon.toStringAsFixed(5);
     if (place.elevationM != null) {
       widget.altController.text = place.elevationM.toString();
     }
-    setState(() => _suggestions = const []);
     widget.onCoordinatesApplied();
   }
 
   @override
   Widget build(BuildContext context) {
+    final q = widget.nameController.text.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -119,13 +241,18 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
             hintText: 'Назва або пошук у OpenStreetMap…',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             isDense: true,
-            suffixIcon: _loading
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
+            suffixIcon: _loading || _loadingPeaks
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
                     child: SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _loadingPeaks && !_loading
+                            ? Colors.grey
+                            : null,
+                      ),
                     ),
                   )
                 : Icon(Icons.search, color: Colors.grey[600]),
@@ -135,6 +262,17 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
             _scheduleSearch(value);
           },
         ),
+        if (!_loading &&
+            !_loadingPeaks &&
+            q.length >= 3 &&
+            _suggestions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Нічого не знайдено. Спробуйте повну назву.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ),
         if (_suggestions.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -184,7 +322,7 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
           ),
         const SizedBox(height: 4),
         Text(
-          '© OSM: Nominatim + пошук вершин (Overpass). Оберіть пункт — підставляться координати.',
+          'Каталог + OpenStreetMap. Спочатку міста, потім вершини.',
           style: TextStyle(fontSize: 11, color: Colors.grey[600]),
         ),
       ],

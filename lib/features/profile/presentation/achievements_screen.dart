@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AchievementsScreen extends StatefulWidget {
@@ -20,23 +23,49 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   }
 
   Future<void> _loadAchievements() async {
-    final userId = Supabase.instance.client.auth.currentUser!.id;
-    final all = await Supabase.instance.client.from('achievements').select();
-    final userAch = await Supabase.instance.client
-        .from('user_achievements')
-        .select('achievement_id')
-        .eq('user_id', userId);
+    final client = Supabase.instance.client;
+    final userId = client.auth.currentUser!.id;
+
+    final results = await Future.wait([
+      client.from('achievements').select(),
+      client
+          .from('user_achievements')
+          .select('achievement_id')
+          .eq('user_id', userId),
+    ]);
 
     if (!mounted) return;
     setState(() {
-      _achievements = (all as List).cast<Map<String, dynamic>>();
+      _achievements = (results[0] as List).cast<Map<String, dynamic>>();
       _earned
         ..clear()
         ..addAll(
-          (userAch as List).map((e) => e['achievement_id'] as String),
+          (results[1] as List).map((e) => e['achievement_id'] as String),
         );
       _loading = false;
     });
+
+    // Синхронізація у фоні — не блокує відображення бейджів.
+    unawaited(_syncAchievementsInBackground(userId));
+  }
+
+  Future<void> _syncAchievementsInBackground(String userId) async {
+    try {
+      await Supabase.instance.client.rpc('sync_my_achievements');
+      if (!mounted) return;
+      final userAch = await Supabase.instance.client
+          .from('user_achievements')
+          .select('achievement_id')
+          .eq('user_id', userId);
+      if (!mounted) return;
+      setState(() {
+        _earned
+          ..clear()
+          ..addAll(
+            (userAch as List).map((e) => e['achievement_id'] as String),
+          );
+      });
+    } catch (_) {}
   }
 
   void _showBadgeDetails({
@@ -67,8 +96,25 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       backgroundColor: const Color(0xFFFAFAF7),
       appBar: AppBar(
         backgroundColor: const Color(0xFFFAFAF7),
-        title: const Text('Досягнення'),
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black87),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/profile');
+            }
+          },
+        ),
+        title: const Text(
+          'Досягнення',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
       ),
       body: SafeArea(
         child: _loading

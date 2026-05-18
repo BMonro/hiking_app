@@ -1,0 +1,48 @@
+═══════════════════════════════════════════════════════════════
+  Бекенд: Edge Functions + SQL (покроково)
+═══════════════════════════════════════════════════════════════
+
+ТЕРМІНАЛ (PowerShell) у d:\HikingApp\hiking_app:
+
+  npx supabase@latest login
+  npx supabase@latest link --project-ref ВАШ_REFERENCE_ID
+  npx supabase@latest secrets set OPENAI_API_KEY=sk-...
+  (перевірка: npx supabase@latest secrets list — має бути OPENAI_API_KEY)
+
+  npx supabase@latest functions deploy ai-chat
+  npx supabase@latest functions deploy recommend-routes
+  npx supabase@latest functions deploy trip-actions
+
+SQL у Supabase → SQL Editor (по черзі):
+
+  1) supabase/achievements_auto_grant.sql     (досягнення)
+  2) supabase/profile_experience_sync.sql   (experience_count)
+  3) supabase/trip_organizer_participant.sql (організатор у поході)
+  4) supabase/notifications_rls_trip_events.sql (якщо ще не було)
+
+───────────────────────────────────────────────────────────────
+Що на бекенді
+───────────────────────────────────────────────────────────────
+
+Edge Functions (Deno):
+  ai-chat              — ШІ-чат
+  recommend-routes     — ШІ або підбір за профілем
+  trip-actions         — заявка / схвалити / скасувати похід
+
+PostgreSQL:
+  achievements_auto_grant.sql
+  profile_experience_sync.sql
+  trip_organizer_participant.sql
+
+Reference ID: Dashboard → Project Settings → General
+
+───────────────────────────────────────────────────────────────
+Тестові дані (маршрути, походи, журнал)
+───────────────────────────────────────────────────────────────
+
+  1) supabase/schema_recommended_constraints.sql  (індекси UNIQUE)
+  2) supabase/seed_data.sql
+  або PowerShell: .\scripts\seed-database.ps1
+
+  Спочатку зареєструйтесь у застосунку, потім seed
+  (для походів і журналу потрібен auth.users).

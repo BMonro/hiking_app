@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../domain/route_detail.dart';
+import '../../navigation/domain/offline_map_package.dart';
 import 'routes_provider.dart';
 
 final routeOfflineStatusProvider =
@@ -11,30 +11,37 @@ final routeOfflineStatusProvider =
   return ref.watch(routesRepositoryProvider).isRouteOffline(routeId);
 });
 
-final offlineRoutesProvider = FutureProvider<List<RouteDetail>>((ref) async {
+/// Локально збережені **карти** (тайли), не копії маршрутів.
+final offlineMapsProvider = FutureProvider<List<OfflineMapPackage>>((ref) async {
+  ref.keepAlive();
   final service = ref.read(offlineMapServiceProvider);
-  final local = await service.listDownloadedRoutes();
-  final byId = {for (final detail in local) detail.route.id: detail};
+  final local = await service.listOfflineMaps();
+  final byId = {for (final m in local) m.routeId: m};
 
   try {
-    final remoteRoutes =
+    final remote =
         await ref.read(routesRepositoryProvider).getOfflineRoutesFromServer();
-    for (final route in remoteRoutes) {
+    for (final route in remote) {
       if (byId.containsKey(route.id)) continue;
-      final cached = await service.loadCachedRouteDetail(route.id);
-      byId[route.id] = cached ??
-          RouteDetail(
-            route: route,
-            waypoints: const [],
-          );
+      if (await service.hasOfflineMap(route.id)) {
+        final pkg = await service.getOfflineMap(route.id);
+        if (pkg != null) byId[route.id] = pkg;
+      } else {
+        byId[route.id] = OfflineMapPackage(
+          routeId: route.id,
+          title: route.title,
+        );
+      }
     }
   } catch (_) {}
 
-  final routes = byId.values.toList();
-  routes.sort(
-    (a, b) => a.route.title.toLowerCase().compareTo(
-          b.route.title.toLowerCase(),
-        ),
+  final maps = byId.values.toList();
+  maps.sort(
+    (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
   );
-  return routes;
+  return maps;
 });
+
+/// Зворотна сумісність імені (якщо десь лишилось посилання).
+@Deprecated('Use offlineMapsProvider')
+final offlineRoutesProvider = offlineMapsProvider;

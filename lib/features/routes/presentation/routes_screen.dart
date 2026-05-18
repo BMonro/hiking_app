@@ -392,206 +392,9 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
   }
 
   Future<void> _showEditRouteDialog(BuildContext context, RouteModel route) async {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    RouteDetail? detail;
-    try {
-      detail =
-          await ref.read(routesRepositoryProvider).getRouteDetail(route.id);
-    } catch (_) {
-      detail = null;
-    }
-
-    if (context.mounted) Navigator.of(context).pop();
-
-    if (!context.mounted) return;
-
-    final titleController = TextEditingController(text: route.title);
-    final descController = TextEditingController(text: route.description);
-    final distanceController = TextEditingController();
-    final durationController = TextEditingController();
-    final ascentController = TextEditingController();
-    String selectedDifficulty = route.difficulty;
-    String selectedRouteType = route.routeType;
-    final points = _draftsFromWaypoints(detail?.waypoints);
-
-    final initialStats = _computeFromPoints(points, _distance);
-    distanceController.text = initialStats.distanceKm.toStringAsFixed(2);
-    durationController.text = initialStats.durationH == 0
-        ? ''
-        : initialStats.durationH.toStringAsFixed(1);
-    ascentController.text =
-        initialStats.ascentM == 0 ? '' : initialStats.ascentM.toString();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 24,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Редагувати маршрут',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: titleController,
-                  decoration: _inputDecoration('Назва маршруту *'),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedRouteType,
-                  decoration: _inputDecoration('Вид маршруту'),
-                  items: RouteModel.storedRouteTypeKeys
-                      .map(
-                        (k) => DropdownMenuItem<String>(
-                          value: k,
-                          child: Text(RouteModel.labelUkForRouteType(k)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => setModalState(
-                    () => selectedRouteType =
-                        value ?? RouteModel.normalizeStoredRouteType(null),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descController,
-                  maxLines: 3,
-                  decoration: _inputDecoration('Опис'),
-                ),
-                const SizedBox(height: 12),
-                _PointsEditor(
-                  points: points,
-                  onChanged: () {
-                    final stats = _computeFromPoints(points, _distance);
-                    distanceController.text =
-                        stats.distanceKm.toStringAsFixed(2);
-                    durationController.text = stats.durationH == 0
-                        ? ''
-                        : stats.durationH.toStringAsFixed(1);
-                    ascentController.text =
-                        stats.ascentM == 0 ? '' : stats.ascentM.toString();
-                    setModalState(() {});
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: distanceController,
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                        decoration: _inputDecoration('Відстань (км) (авто)'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: durationController,
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                        decoration: _inputDecoration('Тривалість (год) (авто)'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: ascentController,
-                  keyboardType: TextInputType.number,
-                  decoration: _inputDecoration('Перепад висот (м) (авто)'),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedDifficulty,
-                  decoration: _inputDecoration('Складність'),
-                  items: const [
-                    DropdownMenuItem(value: 'easy', child: Text('Легкий')),
-                    DropdownMenuItem(value: 'medium', child: Text('Середній')),
-                    DropdownMenuItem(value: 'hard', child: Text('Важкий')),
-                  ],
-                  onChanged: (value) => setModalState(
-                    () => selectedDifficulty = value ?? selectedDifficulty,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (titleController.text.trim().isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Введіть назву маршруту')),
-                      );
-                      return;
-                    }
-                    if (!_hasValidStartFinish(points)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Додайте старт і фініш з координатами'),
-                        ),
-                      );
-                      return;
-                    }
-                    try {
-                      final stats = _computeFromPoints(points, _distance);
-                      final repo = ref.read(routesRepositoryProvider);
-                      await repo.updateRoute(
-                        route.id,
-                        {
-                          'title': titleController.text.trim(),
-                          'route_type': selectedRouteType,
-                          'description': descController.text.trim(),
-                          'distance_km': stats.distanceKm,
-                          'duration_h': stats.durationH,
-                          'ascent_m': stats.ascentM,
-                          'difficulty': selectedDifficulty,
-                        },
-                      );
-                      await repo.replaceRoutePoints(
-                        route.id,
-                        _toDbPoints(route.id, points),
-                      );
-                      ref.invalidate(routesProvider);
-                      ref.invalidate(routeDetailProvider(route.id));
-                      if (context.mounted) Navigator.pop(context);
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Помилка редагування: $e')),
-                        );
-                      }
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text('Зберегти зміни'),
-                ),
-              ],
-            ),
-          ),
-        ),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => RouteEditorScreen(route: route),
       ),
     );
   }
@@ -634,188 +437,10 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
     }
   }
 
-  void _showAddRouteDialog(BuildContext context) {
-    final titleController = TextEditingController();
-    final descController = TextEditingController();
-    final distanceController = TextEditingController(); // auto-fill
-    final durationController = TextEditingController(); // auto-fill
-    final ascentController = TextEditingController(); // auto-fill
-    String selectedDifficulty = 'easy';
-    String selectedRouteType = 'linear';
-    final points = <_RoutePointDraft>[
-      _RoutePointDraft(pointType: 'start'),
-      _RoutePointDraft(pointType: 'finish'),
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 24,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Новий маршрут',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: titleController,
-                  decoration: _inputDecoration('Назва маршруту *'),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedRouteType,
-                  decoration: _inputDecoration('Вид маршруту'),
-                  items: RouteModel.storedRouteTypeKeys
-                      .map(
-                        (k) => DropdownMenuItem<String>(
-                          value: k,
-                          child: Text(RouteModel.labelUkForRouteType(k)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    setModalState(
-                      () => selectedRouteType =
-                          value ?? RouteModel.normalizeStoredRouteType(null),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descController,
-                  maxLines: 3,
-                  decoration: _inputDecoration('Опис'),
-                ),
-                const SizedBox(height: 12),
-                _PointsEditor(
-                  points: points,
-                  onChanged: () {
-                    final stats = _computeFromPoints(points, _distance);
-                    distanceController.text =
-                        stats.distanceKm.toStringAsFixed(2);
-                    durationController.text = stats.durationH == 0
-                        ? ''
-                        : stats.durationH.toStringAsFixed(1);
-                    ascentController.text =
-                        stats.ascentM == 0 ? '' : stats.ascentM.toString();
-                    setModalState(() {});
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: distanceController,
-                        keyboardType: TextInputType.number,
-                        decoration: _inputDecoration('Відстань (км) (авто)'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: durationController,
-                        keyboardType: TextInputType.number,
-                        decoration: _inputDecoration('Тривалість (год) (авто)'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: ascentController,
-                  keyboardType: TextInputType.number,
-                  decoration: _inputDecoration('Перепад висот (м) (авто)'),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedDifficulty,
-                  decoration: _inputDecoration('Складність'),
-                  items: const [
-                    DropdownMenuItem(value: 'easy', child: Text('Легкий')),
-                    DropdownMenuItem(value: 'medium', child: Text('Середній')),
-                    DropdownMenuItem(value: 'hard', child: Text('Важкий')),
-                  ],
-                  onChanged: (value) {
-                    setModalState(() => selectedDifficulty = value!);
-                  },
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () async {
-                    if (titleController.text.trim().isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Введіть назву маршруту')),
-                      );
-                      return;
-                    }
-                    if (!_hasValidStartFinish(points)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Додайте старт і фініш з координатами'),
-                        ),
-                      );
-                      return;
-                    }
-                    try {
-                      final authorId =
-                          Supabase.instance.client.auth.currentUser!.id;
-                      final stats = _computeFromPoints(points, _distance);
-                      final repo = ref.read(routesRepositoryProvider);
-                      final routeId = await repo.addRouteReturningId({
-                        'title': titleController.text.trim(),
-                        'route_type': selectedRouteType,
-                        'description': descController.text.trim(),
-                        'distance_km': stats.distanceKm,
-                        'duration_h': stats.durationH,
-                        'ascent_m': stats.ascentM,
-                        'difficulty': selectedDifficulty,
-                        'is_public': true,
-                        'author_id': authorId,
-                      });
-                      await repo.replaceRoutePoints(
-                        routeId,
-                        _toDbPoints(routeId, points),
-                      );
-                      ref.invalidate(routesProvider);
-                      ref.invalidate(routeDetailProvider(routeId));
-                      if (context.mounted) Navigator.pop(context);
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Помилка: $e')),
-                        );
-                      }
-                    }
-                  },
-                  child: const Text('Зберегти маршрут'),
-                ),
-              ],
-            ),
-          ),
-        ),
+  Future<void> _showAddRouteDialog(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => const RouteEditorScreen(),
       ),
     );
   }
@@ -826,6 +451,12 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     );
+  }
+}
+
+void _disposePointDrafts(List<_RoutePointDraft> points) {
+  for (final p in points) {
+    p.dispose();
   }
 }
 
@@ -877,6 +508,13 @@ class _RoutePointDraft {
   double? get lon => double.tryParse(lonController.text.replaceAll(',', '.'));
   int? get alt => int.tryParse(altController.text.trim());
   String get name => nameController.text.trim();
+
+  void dispose() {
+    nameController.dispose();
+    latController.dispose();
+    lonController.dispose();
+    altController.dispose();
+  }
 }
 
 ({double distanceKm, int ascentM, double durationH}) _computeFromPoints(
@@ -1142,6 +780,324 @@ class _PointRow extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Повноекранна форма створення / редагування маршруту.
+class RouteEditorScreen extends ConsumerStatefulWidget {
+  const RouteEditorScreen({
+    super.key,
+    this.route,
+  });
+
+  final RouteModel? route;
+
+  @override
+  ConsumerState<RouteEditorScreen> createState() => _RouteEditorScreenState();
+}
+
+class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
+  static const _distance = Distance();
+
+  final _titleController = TextEditingController();
+  final _descController = TextEditingController();
+  final _distanceController = TextEditingController();
+  final _durationController = TextEditingController();
+  final _ascentController = TextEditingController();
+
+  String _selectedDifficulty = 'easy';
+  String _selectedRouteType = 'linear';
+  List<_RoutePointDraft> _points = [
+    _RoutePointDraft(pointType: 'start'),
+    _RoutePointDraft(pointType: 'finish'),
+  ];
+
+  bool _loading = false;
+  bool _saving = false;
+  bool _initialized = false;
+
+  bool get _isEdit => widget.route != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEdit) {
+      _loading = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadForEdit());
+    } else {
+      _initialized = true;
+    }
+  }
+
+  Future<void> _loadForEdit() async {
+    final route = widget.route!;
+    RouteDetail? detail;
+    try {
+      detail =
+          await ref.read(routesRepositoryProvider).getRouteDetail(route.id);
+    } catch (_) {
+      detail = null;
+    }
+    if (!mounted) return;
+
+    _titleController.text = route.title;
+    _descController.text = route.description;
+    _selectedDifficulty = RouteModel.normalizeDifficulty(route.difficulty);
+    _selectedRouteType = RouteModel.normalizeStoredRouteType(route.routeType);
+    _disposePointDrafts(_points);
+    _points = _draftsFromWaypoints(detail?.waypoints);
+    _applyStatsToFields();
+
+    setState(() {
+      _loading = false;
+      _initialized = true;
+    });
+  }
+
+  void _applyStatsToFields() {
+    final stats = _computeFromPoints(_points, _distance);
+    _distanceController.text = stats.distanceKm.toStringAsFixed(2);
+    _durationController.text =
+        stats.durationH == 0 ? '' : stats.durationH.toStringAsFixed(1);
+    _ascentController.text =
+        stats.ascentM == 0 ? '' : stats.ascentM.toString();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descController.dispose();
+    _distanceController.dispose();
+    _durationController.dispose();
+    _ascentController.dispose();
+    _disposePointDrafts(_points);
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_titleController.text.trim().isEmpty) {
+      _snack('Введіть назву маршруту');
+      return;
+    }
+    if (!_hasValidStartFinish(_points)) {
+      _snack('Додайте старт і фініш з координатами');
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      final stats = _computeFromPoints(_points, _distance);
+      final repo = ref.read(routesRepositoryProvider);
+
+      if (_isEdit) {
+        final routeId = widget.route!.id;
+        await repo.updateRoute(routeId, {
+          'title': _titleController.text.trim(),
+          'route_type': _selectedRouteType,
+          'description': _descController.text.trim(),
+          'distance_km': stats.distanceKm,
+          'duration_h': stats.durationH,
+          'ascent_m': stats.ascentM,
+          'difficulty': _selectedDifficulty,
+        });
+        await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
+        ref.invalidate(routesProvider);
+        ref.invalidate(routeDetailProvider(routeId));
+      } else {
+        final authorId = Supabase.instance.client.auth.currentUser!.id;
+        final routeId = await repo.addRouteReturningId({
+          'title': _titleController.text.trim(),
+          'route_type': _selectedRouteType,
+          'description': _descController.text.trim(),
+          'distance_km': stats.distanceKm,
+          'duration_h': stats.durationH,
+          'ascent_m': stats.ascentM,
+          'difficulty': _selectedDifficulty,
+          'is_public': true,
+          'author_id': authorId,
+        });
+        await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
+        ref.invalidate(routesProvider);
+        ref.invalidate(routeDetailProvider(routeId));
+      }
+
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      _snack(_isEdit ? 'Помилка редагування: $e' : 'Помилка: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F5F2),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF3F5F2),
+        title: Text(_isEdit ? 'Редагувати маршрут' : 'Новий маршрут'),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : !_initialized
+              ? const SizedBox.shrink()
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _titleController,
+                        decoration: _routeEditorDecoration('Назва маршруту *'),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Вид маршруту',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: RouteModel.storedRouteTypeKeys.map((k) {
+                          return ChoiceChip(
+                            label: Text(RouteModel.labelUkForRouteType(k)),
+                            selected: _selectedRouteType == k,
+                            onSelected: _saving
+                                ? null
+                                : (selected) {
+                                    if (!selected) return;
+                                    setState(
+                                      () => _selectedRouteType =
+                                          RouteModel.normalizeStoredRouteType(
+                                            k,
+                                          ),
+                                    );
+                                  },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _descController,
+                        maxLines: 3,
+                        decoration: _routeEditorDecoration('Опис'),
+                      ),
+                      const SizedBox(height: 16),
+                      _PointsEditor(
+                        points: _points,
+                        onChanged: () => setState(_applyStatsToFields),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _distanceController,
+                              readOnly: true,
+                              decoration:
+                                  _routeEditorDecoration('Відстань (км)'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: _durationController,
+                              readOnly: true,
+                              decoration:
+                                  _routeEditorDecoration('Тривалість (год)'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _ascentController,
+                        readOnly: true,
+                        decoration: _routeEditorDecoration('Перепад (м)'),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Складність',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: RouteModel.storedDifficultyKeys.map((k) {
+                          return ChoiceChip(
+                            label: Text(_difficultyLabel(k)),
+                            selected: _selectedDifficulty == k,
+                            onSelected: _saving
+                                ? null
+                                : (selected) {
+                                    if (!selected) return;
+                                    setState(
+                                      () => _selectedDifficulty =
+                                          RouteModel.normalizeDifficulty(k),
+                                    );
+                                  },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: _saving ? null : _save,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2E7D32),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _saving
+                            ? const SizedBox(
+                                height: 22,
+                                width: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                _isEdit ? 'Зберегти зміни' : 'Зберегти маршрут',
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+    );
+  }
+
+  static String _difficultyLabel(String key) => switch (key) {
+        'easy' => 'Легкий',
+        'medium' => 'Середній',
+        'hard' => 'Важкий',
+        _ => key,
+      };
+}
+
+InputDecoration _routeEditorDecoration(String label) {
+  return InputDecoration(
+    labelText: label,
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+  );
 }
 
 class _RouteCard extends StatelessWidget {

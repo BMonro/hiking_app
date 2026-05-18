@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'trips_providers.dart';
 
 /// Повна інформація про спільний похід (для перегляду будь-яким користувачем).
-class TripDetailScreen extends StatelessWidget {
+class TripDetailScreen extends ConsumerWidget {
   const TripDetailScreen({
     super.key,
     required this.tripId,
@@ -11,43 +13,11 @@ class TripDetailScreen extends StatelessWidget {
 
   final String tripId;
 
-  static Future<Map<String, dynamic>?> _fetchTrip(String id) async {
-    final row = await Supabase.instance.client
-        .from('trips')
-        .select(
-          'id, title, description, start_date, end_date, meeting_point, '
-          'max_members, status, trip_code, organizer_id, route_id, '
-          'routes(id, title, difficulty, distance_km, route_type, duration_h, ascent_m, description)',
-        )
-        .eq('id', id)
-        .maybeSingle();
-    if (row == null) return null;
-    final orgId = row['organizer_id']?.toString();
-    if (orgId != null) {
-      final prof = await Supabase.instance.client
-          .from('profiles')
-          .select('full_name')
-          .eq('id', orgId)
-          .maybeSingle();
-      final n = (prof?['full_name'] as String?)?.trim();
-      row['_organizer_name'] = n != null && n.isNotEmpty ? n : 'Організатор';
-    } else {
-      row['_organizer_name'] = '—';
-    }
-    final parts = await Supabase.instance.client
-        .from('trip_participants')
-        .select('status')
-        .eq('trip_id', id);
-    final list = List<Map<String, dynamic>>.from(parts);
-    final approved = list.where((p) => p['status'] == 'approved').length;
-    final pending = list.where((p) => p['status'] == 'pending').length;
-    row['_approved_count'] = approved;
-    row['_pending_count'] = pending;
-    return row;
-  }
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(tripsRealtimeSyncProvider);
+    final tripAsync = ref.watch(tripDetailProvider(tripId));
+
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
@@ -62,13 +32,10 @@ class TripDetailScreen extends StatelessWidget {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
       ),
-      body: FutureBuilder<Map<String, dynamic>?>(
-        future: _fetchTrip(tripId),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final trip = snap.data;
+      body: tripAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('Помилка: $e')),
+        data: (trip) {
           if (trip == null) {
             return Center(
               child: Padding(

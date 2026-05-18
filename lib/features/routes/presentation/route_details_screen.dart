@@ -7,6 +7,7 @@ import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
 import 'offline_route_provider.dart';
 import 'routes_provider.dart';
+import 'routes_screen.dart' show RouteEditorScreen;
 
 class RouteDetailsScreen extends ConsumerWidget {
   final String routeId;
@@ -231,9 +232,9 @@ class _RouteDetailBody extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Редагування зі списку маршрутів'),
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) => RouteEditorScreen(route: route),
                         ),
                       );
                     },
@@ -338,7 +339,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
 
       ref
         ..invalidate(routeOfflineStatusProvider(widget.routeId))
-        ..invalidate(offlineRoutesProvider);
+        ..invalidate(offlineMapsProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Карту збережено для офлайн-використання')),
@@ -364,7 +365,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
       builder: (ctx) => AlertDialog(
         title: const Text('Видалити офлайн-карту'),
         content: const Text(
-          'Завантажені тайли та локальна копія маршруту будуть видалені з пристрою.',
+          'Завантажені тайли карти будуть видалені з пристрою. Деталі маршруту залишаться в каталозі онлайн.',
         ),
         actions: [
           TextButton(
@@ -388,7 +389,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
       } catch (_) {}
       ref
         ..invalidate(routeOfflineStatusProvider(widget.routeId))
-        ..invalidate(offlineRoutesProvider);
+        ..invalidate(offlineMapsProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Офлайн-карту видалено')),
@@ -422,7 +423,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
         child: OutlinedButton.icon(
           onPressed: _downloading ? null : _download,
           icon: const Icon(Icons.download_outlined),
-          label: const Text('Завантажити для офлайн'),
+          label: const Text('Завантажити карту офлайн'),
         ),
       ),
       data: (isOffline) {
@@ -472,7 +473,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
           child: OutlinedButton.icon(
             onPressed: _download,
             icon: const Icon(Icons.download_outlined),
-            label: const Text('Завантажити для офлайн'),
+            label: const Text('Завантажити карту офлайн'),
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFF37474F),
               padding: const EdgeInsets.symmetric(vertical: 14),

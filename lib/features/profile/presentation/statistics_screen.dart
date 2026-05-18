@@ -42,18 +42,57 @@ class StatisticsScreen extends ConsumerStatefulWidget {
 }
 
 class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
-  late int _year;
-
-  @override
-  void initState() {
-    super.initState();
-    _year = DateTime.now().year;
-  }
+  int _year = DateTime.now().year;
+  int _month = DateTime.now().month;
 
   List<int> _yearItems() {
     final now = DateTime.now().year;
-    final start = 2020;
+    const start = 2020;
     return [for (var y = now; y >= start; y--) y];
+  }
+
+  bool get _canGoNextMonth {
+    final now = DateTime.now();
+    return _year < now.year ||
+        (_year == now.year && _month < now.month);
+  }
+
+  void _shiftMonth(int delta) {
+    var m = _month + delta;
+    var y = _year;
+    if (m > 12) {
+      m = 1;
+      y++;
+    } else if (m < 1) {
+      m = 12;
+      y--;
+    }
+    final now = DateTime.now();
+    if (y > now.year || (y == now.year && m > now.month)) {
+      y = now.year;
+      m = now.month;
+    }
+    if (y < 2020) {
+      y = 2020;
+      m = 1;
+    }
+    setState(() {
+      _year = y;
+      _month = m;
+    });
+  }
+
+  void _onYearChanged(int? y) {
+    if (y == null) return;
+    final now = DateTime.now();
+    var month = _month;
+    if (y == now.year && month > now.month) {
+      month = now.month;
+    }
+    setState(() {
+      _year = y;
+      _month = month;
+    });
   }
 
   @override
@@ -107,9 +146,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                           ),
                         )
                         .toList(),
-                    onChanged: (y) {
-                      if (y != null) setState(() => _year = y);
-                    },
+                    onChanged: _onYearChanged,
                   ),
                 ),
               ),
@@ -117,38 +154,67 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
           ),
         ],
       ),
-      body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text('Не вдалося завантажити дані: $e'),
-          ),
-        ),
-        data: (entries) {
-          final s = _computeYearStats(entries);
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _SummaryCards(stats: s),
-                const SizedBox(height: 24),
-                _SectionTitle(title: 'Активність за місяцями'),
-                const SizedBox(height: 12),
-                _MonthlyChart(stats: s),
-                const SizedBox(height: 24),
-                _SectionTitle(title: 'Висотний профіль'),
-                const SizedBox(height: 12),
-                _ElevationChart(stats: s),
-                const SizedBox(height: 24),
-                _SectionTitle(title: 'Рекорди'),
-                const SizedBox(height: 12),
-                _RecordsCard(stats: s),
-              ],
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _MonthNavigator(
+              year: _year,
+              month: _month,
+              canGoNext: _canGoNextMonth,
+              onPrevious: () => _shiftMonth(-1),
+              onNext: _canGoNextMonth ? () => _shiftMonth(1) : null,
             ),
-          );
-        },
+          ),
+          Expanded(
+            child: async.when(
+              loading: () =>
+                  const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('Не вдалося завантажити дані: $e'),
+                ),
+              ),
+              data: (entries) {
+                final yearStats = _computeYearStats(entries);
+                final monthEntries =
+                    _entriesForMonth(entries, _year, _month);
+                final monthStats = _computeYearStats(monthEntries);
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _SummaryCards(stats: monthStats),
+                      const SizedBox(height: 24),
+                      _SectionTitle(title: 'Активність за рік'),
+                      const SizedBox(height: 12),
+                      _YearlyActivityChart(
+                        year: _year,
+                        stats: yearStats,
+                        selectedMonth: _month,
+                      ),
+                      const SizedBox(height: 24),
+                      _SectionTitle(title: 'Висотний профіль'),
+                      const SizedBox(height: 12),
+                      _ElevationChart(
+                        stats: monthStats,
+                        emptyHint:
+                            'Додайте записи в журнал за ${_monthNames[_month - 1].toLowerCase()} $_year',
+                      ),
+                      const SizedBox(height: 24),
+                      _SectionTitle(title: 'Рекорди'),
+                      const SizedBox(height: 12),
+                      _RecordsCard(stats: monthStats),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -190,6 +256,15 @@ double? _asDouble(dynamic v) {
   return double.tryParse(v.toString());
 }
 
+int? _yearFromEntry(Map<String, dynamic> e) {
+  final d = e['date'];
+  if (d == null) return null;
+  if (d is DateTime) return d.year;
+  final parts = d.toString().split('-');
+  if (parts.isNotEmpty) return int.tryParse(parts[0]);
+  return null;
+}
+
 int? _monthFromEntry(Map<String, dynamic> e) {
   final d = e['date'];
   if (d == null) return null;
@@ -198,6 +273,16 @@ int? _monthFromEntry(Map<String, dynamic> e) {
   final parts = s.split('-');
   if (parts.length >= 2) return int.tryParse(parts[1]);
   return null;
+}
+
+List<Map<String, dynamic>> _entriesForMonth(
+  List<Map<String, dynamic>> entries,
+  int year,
+  int month,
+) {
+  return entries
+      .where((e) => _yearFromEntry(e) == year && _monthFromEntry(e) == month)
+      .toList();
 }
 
 String _routeLabel(Map<String, dynamic> e) {
@@ -213,6 +298,7 @@ String _routeLabel(Map<String, dynamic> e) {
 
 _YearStats _computeYearStats(List<Map<String, dynamic>> entries) {
   final monthly = List<int>.filled(12, 0);
+
   double km = 0;
   double hours = 0;
 
@@ -423,11 +509,26 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
+const _monthNames = <String>[
+  'Січень',
+  'Лютий',
+  'Березень',
+  'Квітень',
+  'Травень',
+  'Червень',
+  'Липень',
+  'Серпень',
+  'Вересень',
+  'Жовтень',
+  'Листопад',
+  'Грудень',
+];
+
 const _monthShort = <String>[
   'Січ',
   'Лют',
   'Бер',
-  'Квіт',
+  'Кві',
   'Тра',
   'Чер',
   'Лип',
@@ -438,16 +539,82 @@ const _monthShort = <String>[
   'Гру',
 ];
 
-class _MonthlyChart extends StatelessWidget {
-  const _MonthlyChart({required this.stats});
+class _MonthNavigator extends StatelessWidget {
+  const _MonthNavigator({
+    required this.year,
+    required this.month,
+    required this.canGoNext,
+    required this.onPrevious,
+    required this.onNext,
+  });
 
+  final int year;
+  final int month;
+  final bool canGoNext;
+  final VoidCallback onPrevious;
+  final VoidCallback? onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = '${_monthNames[month - 1]} $year';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _StatsTheme.cardBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Попередній місяць',
+              onPressed: onPrevious,
+              icon: const Icon(Icons.chevron_left),
+              color: _StatsTheme.primaryDark,
+            ),
+            Expanded(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Наступний місяць',
+              onPressed: onNext,
+              icon: const Icon(Icons.chevron_right),
+              color: canGoNext ? _StatsTheme.primaryDark : Colors.grey[400],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _YearlyActivityChart extends StatelessWidget {
+  const _YearlyActivityChart({
+    required this.year,
+    required this.stats,
+    required this.selectedMonth,
+  });
+
+  final int year;
   final _YearStats stats;
+  final int selectedMonth;
 
   @override
   Widget build(BuildContext context) {
     final counts = stats.monthlyHikes;
-    final maxC = counts.reduce((a, b) => a > b ? a : b);
+    final maxC =
+        counts.isEmpty ? 0 : counts.reduce((a, b) => a > b ? a : b);
     final maxMonth = maxC > 0 ? counts.indexOf(maxC) : -1;
+    final selectedIdx = selectedMonth - 1;
     final maxY = maxC <= 0 ? 1.0 : (maxC * 1.25).ceilToDouble();
 
     return Container(
@@ -461,7 +628,8 @@ class _MonthlyChart extends StatelessWidget {
       child: maxC == 0
           ? Center(
               child: Text(
-                'Немає записів у журналі за цей рік',
+                'Немає записів у журналі за $year рік',
+                textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey[600], fontSize: 14),
               ),
             )
@@ -473,27 +641,37 @@ class _MonthlyChart extends StatelessWidget {
                 titlesData: FlTitlesData(
                   show: true,
                   leftTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 28,
                       getTitlesWidget: (value, meta) {
                         final i = value.toInt();
-                        if (i < 0 || i > 11) return const SizedBox();
-                        final isHi = i == maxMonth;
+                        if (i < 0 || i >= 12) return const SizedBox();
+                        final isSelected = i == selectedIdx;
+                        final isPeak = i == maxMonth && maxC > 0;
                         return Padding(
-                          padding: const EdgeInsets.only(top: 6),
+                          padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             _monthShort[i],
                             style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: isHi ? FontWeight.w700 : FontWeight.w500,
-                              color: isHi ? _StatsTheme.primaryDark : Colors.grey[600],
+                              fontSize: 10,
+                              fontWeight: isSelected || isPeak
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? _StatsTheme.primary
+                                  : isPeak
+                                      ? _StatsTheme.primaryDark
+                                      : Colors.grey[600],
                             ),
                           ),
                         );
@@ -505,17 +683,22 @@ class _MonthlyChart extends StatelessWidget {
                 borderData: FlBorderData(show: false),
                 barGroups: List.generate(12, (i) {
                   final v = counts[i].toDouble();
-                  final isHi = i == maxMonth && maxC > 0;
+                  final isSelected = i == selectedIdx;
+                  final isPeak = i == maxMonth && maxC > 0 && !isSelected;
                   return BarChartGroupData(
                     x: i,
                     barRods: [
                       BarChartRodData(
                         toY: v,
-                        width: 10,
+                        width: 14,
                         borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(4),
                         ),
-                        color: isHi ? _StatsTheme.primaryDark : _StatsTheme.mint,
+                        color: isSelected
+                            ? _StatsTheme.primary
+                            : isPeak
+                                ? _StatsTheme.primaryDark
+                                : _StatsTheme.mint,
                       ),
                     ],
                   );
@@ -527,9 +710,13 @@ class _MonthlyChart extends StatelessWidget {
 }
 
 class _ElevationChart extends StatelessWidget {
-  const _ElevationChart({required this.stats});
+  const _ElevationChart({
+    required this.stats,
+    this.emptyHint = 'Додайте записи в журнал за обраний рік',
+  });
 
   final _YearStats stats;
+  final String emptyHint;
 
   @override
   Widget build(BuildContext context) {
@@ -544,9 +731,7 @@ class _ElevationChart extends StatelessWidget {
         ),
         child: Center(
           child: Text(
-            spots.isEmpty
-                ? 'Додайте записи в журнал за обраний рік'
-                : 'У записах немає «набору висоти» — додайте значення в журналі',
+            spots.isEmpty ? emptyHint : 'У записах немає «набору висоти» — додайте значення в журналі',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey[600], fontSize: 14),
           ),

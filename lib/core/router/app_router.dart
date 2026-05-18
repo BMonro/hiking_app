@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -56,34 +57,48 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   ref.onDispose(refresh.dispose);
 
   return GoRouter(
-    initialLocation: '/home',
+    initialLocation: '/login',
     refreshListenable: refresh,
     redirect: (context, state) async {
-      final session = Supabase.instance.client.auth.currentSession;
-      final loc = state.matchedLocation;
-      final isLoggedIn = session != null;
-      final isLoginRoute = loc == '/login';
-      final isRegisterRoute = loc == '/register';
+      try {
+        final session = Supabase.instance.client.auth.currentSession;
+        final loc = state.matchedLocation;
+        final isLoggedIn = session != null;
+        final isLoginRoute = loc == '/login';
+        final isRegisterRoute = loc == '/register';
 
-      if (!isLoggedIn) {
-        if (isLoginRoute || isRegisterRoute) return null;
+        if (!isLoggedIn) {
+          if (isLoginRoute || isRegisterRoute) return null;
+          return '/login';
+        }
+
+        final userId = session.user.id;
+        final needsPhysical = await _needsPhysicalProfile(userId);
+
+        if (needsPhysical) {
+          if (isRegisterRoute) return null;
+          return '/register?oauth=1';
+        }
+
+        if (!needsPhysical) {
+          if (isRegisterRoute || isLoginRoute) return '/home';
+        }
+
+        return null;
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint('GoRouter redirect error: $e\n$st');
+        }
         return '/login';
       }
-
-      final userId = session.user.id;
-      final needsPhysical = await _needsPhysicalProfile(userId);
-
-      if (needsPhysical) {
-        if (isRegisterRoute) return null;
-        return '/register?oauth=1';
-      }
-
-      if (!needsPhysical) {
-        if (isRegisterRoute || isLoginRoute) return '/home';
-      }
-
-      return null;
     },
+    errorBuilder: (context, state) => Scaffold(
+      appBar: AppBar(title: const Text('Помилка')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(state.error?.toString() ?? 'Невідома помилка навігації'),
+      ),
+    ),
     routes: [
       GoRoute(
         path: '/login',

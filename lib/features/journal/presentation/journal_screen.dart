@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 final journalProvider = FutureProvider((ref) async {
+  ref.keepAlive();
   final userId = Supabase.instance.client.auth.currentUser!.id;
   final data = await Supabase.instance.client
       .from('journal_entries')
@@ -18,6 +19,7 @@ final journalProvider = FutureProvider((ref) async {
 });
 
 final journalStatsProvider = FutureProvider((ref) async {
+  ref.keepAlive();
   final userId = Supabase.instance.client.auth.currentUser!.id;
   final data = await Supabase.instance.client
       .from('profile_stats')
@@ -139,8 +141,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           .from('journal_entries')
           .delete()
           .eq('id', entryId);
-      ref.refresh(journalProvider);
-      ref.refresh(journalStatsProvider);
+      ref.invalidate(journalProvider);
+      ref.invalidate(journalStatsProvider);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Запис видалено')),
@@ -666,8 +668,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                                   .toList(),
                             );
                       }
-                      ref.refresh(journalProvider);
-                      ref.refresh(journalStatsProvider);
+                      ref.invalidate(journalProvider);
+                      ref.invalidate(journalStatsProvider);
                       if (context.mounted) Navigator.pop(context);
                     } catch (e) {
                       if (context.mounted) {

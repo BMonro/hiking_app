@@ -3,35 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-final tripMessagesProvider =
-    FutureProvider.family<List<Map<String, dynamic>>, String>((ref, tripId) async {
-  final rows = await Supabase.instance.client
-      .from('messages')
-      .select('id, trip_id, sender_id, content, sent_at')
-      .eq('trip_id', tripId)
-      .order('sent_at', ascending: true);
-  final list = List<Map<String, dynamic>>.from(rows);
-  if (list.isEmpty) return list;
-  final ids = list.map((m) => m['sender_id']).whereType<String>().toSet().toList();
-  final profiles = await Supabase.instance.client
-      .from('profiles')
-      .select('id, full_name')
-      .inFilter('id', ids);
-  final nameById = <String, String>{};
-  for (final p in List<Map<String, dynamic>>.from(profiles)) {
-    final id = p['id']?.toString();
-    if (id != null) {
-      nameById[id] = (p['full_name'] as String?)?.trim().isNotEmpty == true
-          ? p['full_name'] as String
-          : 'Користувач';
-    }
-  }
-  for (final m in list) {
-    final sid = m['sender_id']?.toString();
-    m['_sender_label'] = nameById[sid] ?? 'Учасник';
-  }
-  return list;
-});
+import 'trips_providers.dart';
 
 class TripChatScreen extends ConsumerStatefulWidget {
   final String tripId;
@@ -49,12 +21,25 @@ class TripChatScreen extends ConsumerStatefulWidget {
 
 class _TripChatScreenState extends ConsumerState<TripChatScreen> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   bool _sending = false;
 
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   Future<void> _send() async {
@@ -62,14 +47,11 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
-      final uid = Supabase.instance.client.auth.currentUser!.id;
-      await Supabase.instance.client.from('messages').insert({
-        'trip_id': widget.tripId,
-        'sender_id': uid,
-        'content': text,
-      });
+      await ref
+          .read(tripMessagesProvider(widget.tripId).notifier)
+          .send(widget.tripId, text);
       _controller.clear();
-      ref.invalidate(tripMessagesProvider(widget.tripId));
+      _scrollToBottom();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -83,8 +65,15 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(tripsRealtimeSyncProvider);
     final messagesAsync = ref.watch(tripMessagesProvider(widget.tripId));
     final myId = Supabase.instance.client.auth.currentUser!.id;
+
+    ref.listen(tripMessagesProvider(widget.tripId), (prev, next) {
+      if (next.hasValue && (prev?.value?.length ?? 0) < (next.value?.length ?? 0)) {
+        _scrollToBottom();
+      }
+    });
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
@@ -107,7 +96,11 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
             ),
             const Text(
               'Чат групи',
-              style: TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.normal),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black54,
+                fontWeight: FontWeight.normal,
+              ),
             ),
           ],
         ),
@@ -132,6 +125,7 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                   );
                 }
                 return ListView.builder(
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   itemCount: items.length,
                   itemBuilder: (context, index) {

@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
 
+import 'widgets/profile_avatar.dart';
+
 final profileProvider = FutureProvider((ref) async {
+  ref.keepAlive();
   final userId = Supabase.instance.client.auth.currentUser!.id;
   final data = await Supabase.instance.client
       .from('profiles')
@@ -130,6 +133,7 @@ class ProfileScreen extends ConsumerWidget {
                     ? name.trim().split(' ').map((e) => e[0]).take(2).join()
                     : (user?.email?[0].toUpperCase() ?? '?');
                 final fitnessLevel = profile?['fitness_level'] as String?;
+                final avatarUrl = profile?['avatar_url'] as String?;
                 return Container(
                   padding: const EdgeInsets.all(22),
                   decoration: BoxDecoration(
@@ -148,17 +152,10 @@ class ProfileScreen extends ConsumerWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          CircleAvatar(
+                          ProfileAvatar(
                             radius: 42,
-                            backgroundColor: const Color(0xFF2E7D32),
-                            child: Text(
-                              initials,
-                              style: const TextStyle(
-                                fontSize: 30,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            initials: initials,
+                            imageUrl: avatarUrl,
                           ),
                           const SizedBox(width: 18),
                           Expanded(
@@ -272,59 +269,6 @@ class ProfileScreen extends ConsumerWidget {
                 );
               },
             ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 16,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Активність',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.grey[850],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      _ActionChip(
-                        label: 'План',
-                        icon: Icons.map_outlined,
-                        color: const Color(0xFF7BC5A0),
-                        onTap: () {},
-                      ),
-                      const SizedBox(width: 10),
-                      _ActionChip(
-                        label: 'Звіти',
-                        icon: Icons.bar_chart_outlined,
-                        color: const Color(0xFFFFB347),
-                        onTap: () {},
-                      ),
-                      const SizedBox(width: 10),
-                      _ActionChip(
-                        label: 'Витрати',
-                        icon: Icons.wallet_travel_outlined,
-                        color: const Color(0xFF4F83CC),
-                        onTap: () {},
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
             const SizedBox(height: 24),
             Text(
               'Налаштування',
@@ -390,33 +334,6 @@ class ProfileScreen extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(16),
                   ),
                   elevation: 0,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () async {
-                  await Supabase.instance.client.auth.signOut();
-                  if (context.mounted) context.go('/login');
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.red.shade700,
-                  side: BorderSide(color: Colors.red.shade100),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: Text(
-                  'Вийти з акаунту',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.red.shade700,
-                  ),
                 ),
               ),
             ),
@@ -489,54 +406,6 @@ class _MenuTile extends StatelessWidget {
               ),
               Icon(Icons.chevron_right, color: Colors.grey[400]),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ActionChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _ActionChip({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Material(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: onTap,
-          hoverColor: color.withOpacity(0.25),
-          mouseCursor: SystemMouseCursors.click,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: color, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       ),

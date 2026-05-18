@@ -6,6 +6,10 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../profile/data/avatar_storage_service.dart';
+
+import 'widgets/auth_form_field.dart';
+
 /// Двокрокова реєстрація: (1) імʼя, прізвище, email, пароль
 /// (2) фото, вік, рівень підготовки, досвід, уподобання.
 class RegisterScreen extends StatefulWidget {
@@ -42,6 +46,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isGoogleLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+
+  String? _firstNameError;
+  String? _lastNameError;
+  String? _emailError;
+  String? _passwordError;
+  String? _confirmPasswordError;
+  String? _ageError;
 
   static const _interests = [
     ('Природа', 'nature'),
@@ -122,6 +133,70 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  void _clearStep1Errors() {
+    setState(() {
+      _firstNameError = null;
+      _lastNameError = null;
+      _emailError = null;
+      _passwordError = null;
+      _confirmPasswordError = null;
+    });
+  }
+
+  bool _validateStep1({
+    required String first,
+    required String last,
+    required String email,
+    required String password,
+    required String confirm,
+  }) {
+    var ok = true;
+    String? firstNameError;
+    String? lastNameError;
+    String? emailError;
+    String? passwordError;
+    String? confirmPasswordError;
+
+    if (first.isEmpty) {
+      firstNameError = 'Заповніть імʼя';
+      ok = false;
+    }
+    if (last.isEmpty) {
+      lastNameError = 'Заповніть прізвище';
+      ok = false;
+    }
+    if (email.isEmpty) {
+      emailError = 'Заповніть email';
+      ok = false;
+    } else if (!_isValidEmail(email)) {
+      emailError = 'Введіть коректну електронну пошту';
+      ok = false;
+    }
+    if (password.isEmpty) {
+      passwordError = 'Заповніть пароль';
+      ok = false;
+    } else if (password.length < 6) {
+      passwordError = 'Мінімум 6 символів';
+      ok = false;
+    }
+    if (confirm.isEmpty) {
+      confirmPasswordError = 'Підтвердіть пароль';
+      ok = false;
+    } else if (password != confirm) {
+      confirmPasswordError = 'Паролі не співпадають';
+      ok = false;
+    }
+
+    setState(() {
+      _firstNameError = firstNameError;
+      _lastNameError = lastNameError;
+      _emailError = emailError;
+      _passwordError = passwordError;
+      _confirmPasswordError = confirmPasswordError;
+    });
+    return ok;
+  }
+
   Future<void> _continueStep1() async {
     final first = _firstNameController.text.trim();
     final last = _lastNameController.text.trim();
@@ -129,20 +204,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final password = _passwordController.text;
     final confirm = _confirmPasswordController.text;
 
-    if (first.isEmpty || last.isEmpty) {
-      _showError('Заповніть імʼя та прізвище');
-      return;
-    }
-    if (!_isValidEmail(email)) {
-      _showError('Введіть коректну електронну пошту');
-      return;
-    }
-    if (password.length < 6) {
-      _showError('Пароль має містити щонайменше 6 символів');
-      return;
-    }
-    if (password != confirm) {
-      _showError('Паролі не співпадають');
+    _clearStep1Errors();
+    if (!_validateStep1(
+      first: first,
+      last: last,
+      email: email,
+      password: password,
+      confirm: confirm,
+    )) {
       return;
     }
 
@@ -185,9 +254,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (mounted) setState(() => _step = 2);
     } on AuthException catch (e) {
-      _showError(_mapAuthError(e.message));
+      final msg = _mapAuthError(e.message);
+      setState(() {
+        if (msg.contains('пошт') || msg.contains('email')) {
+          _emailError = msg;
+        } else {
+          _passwordError = msg;
+        }
+      });
     } catch (_) {
-      _showError('Не вдалося зареєструватися');
+      setState(() => _passwordError = 'Не вдалося зареєструватися');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -198,22 +274,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     String userId,
     File file,
   ) async {
-    final fileName =
-        '$userId-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg';
     try {
-      await Supabase.instance.client.storage
-          .from('avatars')
-          .upload(fileName, file);
-      return Supabase.instance.client.storage
-          .from('avatars')
-          .getPublicUrl(fileName);
-    } on StorageException {
+      return await AvatarStorageService().uploadAvatar(
+        userId: userId,
+        imageFile: file,
+      );
+    } on AvatarUploadException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Фото не завантажено: немає доступу до сховища. Профіль збережено без аватара. '
-              'Перевірте бакет «avatars» і політики в Supabase.',
+              'Фото не завантажено: ${e.message} Профіль збережено без аватара.',
             ),
           ),
         );
@@ -241,9 +312,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final age = int.tryParse(_ageController.text.trim());
     if (age == null || age <= 0 || age > 120) {
-      _showError('Вкажіть коректний вік');
+      setState(() => _ageError = 'Вкажіть коректний вік (1–120)');
       return;
     }
+    setState(() => _ageError = null);
 
     setState(() => _isLoading = true);
     try {
@@ -416,27 +488,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const SizedBox(height: 28),
-          TextField(
+          AuthFormField(
             controller: _firstNameController,
+            errorText: _firstNameError,
             textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) {
+              if (_firstNameError != null) setState(() => _firstNameError = null);
+            },
             decoration: _decoration('Імʼя', Icons.person_outline),
           ),
           const SizedBox(height: 16),
-          TextField(
+          AuthFormField(
             controller: _lastNameController,
+            errorText: _lastNameError,
             textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) {
+              if (_lastNameError != null) setState(() => _lastNameError = null);
+            },
             decoration: _decoration('Прізвище', Icons.person_outline),
           ),
           const SizedBox(height: 16),
-          TextField(
+          AuthFormField(
             controller: _emailController,
+            errorText: _emailError,
             keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) {
+              if (_emailError != null) setState(() => _emailError = null);
+            },
             decoration: _decoration('Email', Icons.email_outlined),
           ),
           const SizedBox(height: 16),
-          TextField(
+          AuthFormField(
             controller: _passwordController,
+            errorText: _passwordError,
             obscureText: _obscurePassword,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) {
+              if (_passwordError != null) setState(() => _passwordError = null);
+            },
             decoration: _decoration('Пароль', Icons.lock_outlined).copyWith(
               suffixIcon: IconButton(
                 icon: Icon(
@@ -448,9 +540,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
+          AuthFormField(
             controller: _confirmPasswordController,
+            errorText: _confirmPasswordError,
             obscureText: _obscureConfirmPassword,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) {
+              if (_confirmPasswordError != null) {
+                setState(() => _confirmPasswordError = null);
+              }
+            },
             decoration:
                 _decoration('Підтвердіть пароль', Icons.lock_outline).copyWith(
               suffixIcon: IconButton(
@@ -561,9 +660,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          TextField(
+          AuthFormField(
             controller: _ageController,
+            errorText: _ageError,
             keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) {
+              if (_ageError != null) setState(() => _ageError = null);
+            },
             decoration: _decoration('Вік', Icons.calendar_today_outlined),
           ),
           const SizedBox(height: 16),

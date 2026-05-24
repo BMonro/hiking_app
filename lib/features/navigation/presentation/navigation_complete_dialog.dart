@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/validation/form_validators.dart';
+import '../../../core/widgets/app_text_form_field.dart';
 import '../domain/hike_session_summary.dart';
 
 /// Діалог завершення походу та форма збереження в журнал.
@@ -101,6 +103,7 @@ Future<void> _showJournalSaveSheet(
         ? 'Завершено навігацією маршруту.'
         : 'Завершено навігацію достроково.',
   );
+  final formKey = GlobalKey<FormState>();
 
   try {
     await showModalBottomSheet<void>(
@@ -118,7 +121,10 @@ Future<void> _showJournalSaveSheet(
           bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
         ),
         child: SingleChildScrollView(
-          child: Column(
+          child: Form(
+            key: formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -127,40 +133,45 @@ Future<void> _showJournalSaveSheet(
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              TextField(
+              AppTextFormField(
                 controller: titleController,
+                validator: FormValidators.title,
                 decoration: _decoration('Назва походу *'),
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
-                    child: TextField(
+                    child: AppTextFormField(
                       controller: distanceController,
                       keyboardType: TextInputType.number,
+                      validator: FormValidators.journalDistance,
                       decoration: _decoration('Відстань (км)'),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: TextField(
+                    child: AppTextFormField(
                       controller: durationController,
                       keyboardType: TextInputType.number,
+                      validator: FormValidators.journalDuration,
                       decoration: _decoration('Тривалість (год)'),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              TextField(
+              AppTextFormField(
                 controller: ascentController,
                 keyboardType: TextInputType.number,
+                validator: FormValidators.journalAscent,
                 decoration: _decoration('Перепад висот (м)'),
               ),
               const SizedBox(height: 12),
-              TextField(
+              AppTextFormField(
                 controller: notesController,
                 maxLines: 3,
+                validator: FormValidators.notes,
                 decoration: _decoration('Нотатки'),
               ),
               const SizedBox(height: 20),
@@ -170,12 +181,7 @@ Future<void> _showJournalSaveSheet(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: () async {
-                  if (titleController.text.trim().isEmpty) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(content: Text('Введіть назву')),
-                    );
-                    return;
-                  }
+                  if (!(formKey.currentState?.validate() ?? false)) return;
                   try {
                     final userId =
                         Supabase.instance.client.auth.currentUser!.id;
@@ -238,6 +244,7 @@ Future<void> _showJournalSaveSheet(
                 child: const Text('Перейти до журналу'),
               ),
             ],
+          ),
           ),
         ),
       ),

@@ -9,3 +9,24 @@ verify_jwt = true
 
 [functions.trip-actions]
 verify_jwt = true
+
+[functions.route-hike]
+verify_jwt = true
+
+[functions.weather]
+verify_jwt = true
+
+[functions.geosearch]
+verify_jwt = true
+
+[functions.poi-nearby]
+verify_jwt = true
+
+[functions.save-route]
+verify_jwt = true
+
+[functions.prepare-offline-route]
+verify_jwt = true
+
+[functions.trip-chat]
+verify_jwt = true

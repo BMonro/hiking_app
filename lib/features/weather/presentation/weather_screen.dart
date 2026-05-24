@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
+import '../../../core/network/network_status_provider.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/offline_only_message.dart';
 import '../data/weather_repository.dart';
 import '../domain/place_suggestion.dart';
 import '../domain/weather_model.dart';
@@ -74,11 +77,35 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen> {
   @override
   Widget build(BuildContext context) {
     final selected = ref.watch(_weatherSelectedPlaceProvider);
+    final hasNetwork = ref.watch(hasNetworkProvider).value ?? true;
+
+    if (!hasNetwork) {
+      return Scaffold(
+        backgroundColor: _WeatherColors.background,
+        appBar: AppBar(
+          backgroundColor: AppTheme.toolbarBackground,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          title: const Text(
+            'Погода',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          centerTitle: true,
+        ),
+        body: const OfflineOnlyMessage(
+          icon: Icons.wb_cloudy_outlined,
+          title: 'Погода недоступна офлайн',
+          subtitle:
+              'Прогноз потребує інтернету. Підключіть Wi‑Fi або мобільні дані.',
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: _WeatherColors.background,
       appBar: AppBar(
-        backgroundColor: _WeatherColors.background,
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: const Text(
           'Погода',

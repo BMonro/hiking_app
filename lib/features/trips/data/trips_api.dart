@@ -32,15 +32,168 @@ class TripsApi {
     });
   }
 
-  Future<void> _invoke(Map<String, dynamic> body) async {
-    final response = await _client.functions.invoke(
-      'trip-actions',
-      body: body,
-    );
+  Future<({String tripId, String tripCode})> createTrip({
+    required String title,
+    required String description,
+    required String meetingPoint,
+    required int maxMembers,
+    required String startDate,
+    required String endDate,
+    String? routeId,
+  }) async {
+    try {
+      final data = await _invoke({
+        'action': 'create',
+        'title': title,
+        'description': description,
+        'meeting_point': meetingPoint,
+        'max_members': maxMembers,
+        'start_date': startDate,
+        'end_date': endDate,
+        if (routeId != null) 'route_id': routeId,
+      });
+      return (
+        tripId: data['trip_id'].toString(),
+        tripCode: data['trip_code']?.toString() ?? '',
+      );
+    } on TripsApiException catch (e) {
+      if (_shouldFallbackToDirectDb(e.code)) {
+        return _createTripDirect(
+          title: title,
+          description: description,
+          meetingPoint: meetingPoint,
+          maxMembers: maxMembers,
+          startDate: startDate,
+          endDate: endDate,
+          routeId: routeId,
+        );
+      }
+      rethrow;
+    }
+  }
 
-    final data = _asMap(response.data);
-    if (response.status >= 400 || data?['error'] != null) {
-      throw TripsApiException(_messageFor(data, response.status));
+  Future<void> updateTrip({
+    required String tripId,
+    required String title,
+    required String description,
+    required String meetingPoint,
+    required int maxMembers,
+    required String startDate,
+    required String endDate,
+    String? routeId,
+  }) async {
+    try {
+      await _invoke({
+        'action': 'update',
+        'trip_id': tripId,
+        'title': title,
+        'description': description,
+        'meeting_point': meetingPoint,
+        'max_members': maxMembers,
+        'start_date': startDate,
+        'end_date': endDate,
+        if (routeId != null) 'route_id': routeId,
+      });
+    } on TripsApiException catch (e) {
+      if (_shouldFallbackToDirectDb(e.code)) {
+        await _updateTripDirect(
+          tripId: tripId,
+          title: title,
+          description: description,
+          meetingPoint: meetingPoint,
+          maxMembers: maxMembers,
+          startDate: startDate,
+          endDate: endDate,
+          routeId: routeId,
+        );
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  bool _shouldFallbackToDirectDb(String code) =>
+      code == 'action_and_trip_id_required' ||
+      code == 'unknown_action' ||
+      code == 'action_required';
+
+  Future<({String tripId, String tripCode})> _createTripDirect({
+    required String title,
+    required String description,
+    required String meetingPoint,
+    required int maxMembers,
+    required String startDate,
+    required String endDate,
+    String? routeId,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) {
+      throw TripsApiException('unauthorized', 'Потрібна авторизація');
+    }
+
+    final code =
+        'TRIP-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+    final row = await _client
+        .from('trips')
+        .insert({
+          'title': title,
+          'description': description,
+          'meeting_point': meetingPoint,
+          'max_members': maxMembers,
+          'start_date': startDate,
+          'end_date': endDate,
+          'route_id': routeId,
+          'organizer_id': userId,
+          'status': 'open',
+          'trip_code': code,
+        })
+        .select('id, trip_code')
+        .single();
+
+    return (
+      tripId: row['id'].toString(),
+      tripCode: row['trip_code']?.toString() ?? code,
+    );
+  }
+
+  Future<void> _updateTripDirect({
+    required String tripId,
+    required String title,
+    required String description,
+    required String meetingPoint,
+    required int maxMembers,
+    required String startDate,
+    required String endDate,
+    String? routeId,
+  }) async {
+    await _client.from('trips').update({
+      'title': title,
+      'description': description,
+      'meeting_point': meetingPoint,
+      'max_members': maxMembers,
+      'start_date': startDate,
+      'end_date': endDate,
+      'route_id': routeId,
+    }).eq('id', tripId);
+  }
+
+  Future<Map<String, dynamic>> _invoke(Map<String, dynamic> body) async {
+    try {
+      final response = await _client.functions.invoke(
+        'trip-actions',
+        body: body,
+      );
+
+      final data = _asMap(response.data);
+      if (response.status >= 400 || data?['error'] != null) {
+        final code = data?['error']?.toString() ?? 'edge_error';
+        throw TripsApiException(code, _messageFor(data, response.status));
+      }
+      return data ?? {};
+    } on FunctionException catch (e) {
+      final data = _asMap(e.details);
+      final code = data?['error']?.toString() ?? 'edge_error';
+      throw TripsApiException(code, _messageFor(data, e.status));
     }
   }
 
@@ -58,7 +211,7 @@ class TripsApi {
   }
 
   String _messageFor(Map<String, dynamic>? data, int status) {
-    final code = data?['error']?.toString();
+    final code = data?['error']?.toString() ?? '';
     return switch (code) {
       'trip_full' => 'Група вже набрана за кількістю місць',
       'trip_not_open' => 'Похід не приймає заявки',
@@ -66,6 +219,11 @@ class TripsApi {
       'already_member' => 'Ви вже учасник походу',
       'forbidden' => 'Немає прав для цієї дії',
       'organizer_cannot_apply' => 'Організатор не подає заявку на власний похід',
+      'invalid_dates' => 'Некоректні дати походу',
+      'title_required' => 'Введіть назву походу',
+      'trip_not_editable' => 'Похід більше не редагується',
+      'action_and_trip_id_required' =>
+        'Оновіть Edge Function trip-actions на сервері (див. DEPLOY_EDGE_FUNCTIONS_UA.txt)',
       _ => data?['message']?.toString() ??
           'Помилка операції з походом (HTTP $status)',
     };
@@ -73,8 +231,10 @@ class TripsApi {
 }
 
 class TripsApiException implements Exception {
+  final String code;
   final String message;
-  TripsApiException(this.message);
+
+  TripsApiException(this.code, this.message);
 
   @override
   String toString() => message;

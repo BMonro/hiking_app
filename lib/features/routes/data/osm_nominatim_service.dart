@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../../../core/api/backend_api.dart';
+
 /// Кирилиця (українські/східнослов'янські назви).
 final RegExp _cyrillicLabel = RegExp(r'[\u0400-\u04FF\u0490-\u052F]');
 
@@ -311,9 +313,10 @@ class OsmSearchOptions {
 ///
 /// Дотримуйтесь [політики Nominatim](https://operations.osmfoundation.org/policies/nominatim/).
 class OsmNominatimService {
-  OsmNominatimService({Dio? dio, Dio? weatherDio})
+  OsmNominatimService({Dio? dio, Dio? weatherDio, BackendApi? api})
       : _dio = dio ?? Dio(_baseOptions),
-        _weatherDio = weatherDio ?? Dio(_weatherBaseOptions);
+        _weatherDio = weatherDio ?? Dio(_weatherBaseOptions),
+        _api = api ?? BackendApi();
 
   static final Map<String, List<OsmPlaceResult>> _cache = {};
   static const _cacheMaxEntries = 48;
@@ -341,6 +344,32 @@ class OsmNominatimService {
 
   final Dio _dio;
   final Dio _weatherDio;
+  final BackendApi _api;
+
+  Future<List<OsmPlaceResult>> _edgeSearch(String query, String mode) async {
+    final data = await _api.invoke(
+      'geosearch',
+      body: {'query': query, 'mode': mode},
+      timeout: const Duration(seconds: 30),
+    );
+    final results = data['results'];
+    if (results is! List) return const [];
+    return results
+        .map((e) => _placeFromEdge(Map<String, dynamic>.from(e as Map)))
+        .where((r) => r.lat != 0 || r.lon != 0)
+        .toList();
+  }
+
+  static OsmPlaceResult _placeFromEdge(Map<String, dynamic> m) {
+    return OsmPlaceResult(
+      displayName: m['display_name']?.toString() ?? '',
+      primaryLabel: m['primary_label']?.toString() ?? '',
+      lat: (m['lat'] as num?)?.toDouble() ?? 0,
+      lon: (m['lon'] as num?)?.toDouble() ?? 0,
+      elevationM: (m['elevation_m'] as num?)?.toInt(),
+      isPeak: m['is_peak'] == true,
+    );
+  }
 
   /// Повний оптимізований пошук для точок маршруту (місця + вершини).
   Future<List<OsmPlaceResult>> search(
@@ -354,60 +383,91 @@ class OsmNominatimService {
     final cached = _cache[cacheKey];
     if (cached != null) return cached;
 
-    final places = await searchForRoutePlaces(q, cancelToken: cancelToken);
-    final peaks = await searchForRoutePeaks(q, cancelToken: cancelToken);
-    final merged = _mergePreferPeaks(peaks, places, maxItems: 18);
-    _remember(cacheKey, merged);
-    return merged;
+    try {
+      final merged = await _edgeSearch(q, 'route_full');
+      _remember(cacheKey, merged);
+      return merged;
+    } catch (_) {
+      final places = await searchForRoutePlaces(q, cancelToken: cancelToken);
+      final peaks = await searchForRoutePeaks(q, cancelToken: cancelToken);
+      final merged = _mergePreferPeaks(peaks, places, maxItems: 18);
+      _remember(cacheKey, merged);
+      return merged;
+    }
   }
 
   /// Міста, села, POI (Photon + Nominatim паралельно).
   Future<List<OsmPlaceResult>> searchForWeatherPlaces(
     String query, {
     CancelToken? cancelToken,
-  }) =>
-      _searchPhotonNominatimPlaces(
+  }) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    try {
+      return await _edgeSearch(q, 'weather_places');
+    } catch (_) {
+      return _searchPhotonNominatimPlaces(
         query,
         options: OsmSearchOptions.weatherPlaces,
         cacheKeyPrefix: 'weather_places',
         cancelToken: cancelToken,
       );
+    }
+  }
 
-  /// Вершини з OSM (Overpass, Україна) — окремий запит.
   Future<List<OsmPlaceResult>> searchForWeatherPeaks(
     String query, {
     CancelToken? cancelToken,
-  }) =>
-      _searchOverpassPeaksOnly(
+  }) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    try {
+      return await _edgeSearch(q, 'weather_peaks');
+    } catch (_) {
+      return _searchOverpassPeaksOnly(
         query,
         options: OsmSearchOptions.weatherPeaks,
         cacheKeyPrefix: 'weather_peaks',
         cancelToken: cancelToken,
       );
+    }
+  }
 
-  /// Точки маршруту: міста/села (Photon + Nominatim).
   Future<List<OsmPlaceResult>> searchForRoutePlaces(
     String query, {
     CancelToken? cancelToken,
-  }) =>
-      _searchPhotonNominatimPlaces(
+  }) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    try {
+      return await _edgeSearch(q, 'route_places');
+    } catch (_) {
+      return _searchPhotonNominatimPlaces(
         query,
         options: OsmSearchOptions.routePointPlaces,
         cacheKeyPrefix: 'route_places',
         cancelToken: cancelToken,
       );
+    }
+  }
 
-  /// Точки маршруту: вершини (Overpass).
   Future<List<OsmPlaceResult>> searchForRoutePeaks(
     String query, {
     CancelToken? cancelToken,
-  }) =>
-      _searchOverpassPeaksOnly(
+  }) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    try {
+      return await _edgeSearch(q, 'route_peaks');
+    } catch (_) {
+      return _searchOverpassPeaksOnly(
         query,
         options: OsmSearchOptions.routePointPeaks,
         cacheKeyPrefix: 'route_peaks',
         cancelToken: cancelToken,
       );
+    }
+  }
 
   /// Об'єднати каталог, місця та вершини для підказок у формі.
   List<OsmPlaceResult> mergeRouteSuggestions(
@@ -509,11 +569,17 @@ class OsmNominatimService {
     final cached = _cache[cacheKey];
     if (cached != null) return cached;
 
-    final places = await searchForWeatherPlaces(q, cancelToken: cancelToken);
-    final peaks = await searchForWeatherPeaks(q, cancelToken: cancelToken);
-    final merged = _mergePreferPeaks(peaks, places, maxItems: 18);
-    _remember(cacheKey, merged);
-    return merged;
+    try {
+      final merged = await _edgeSearch(q, 'weather_full');
+      _remember(cacheKey, merged);
+      return merged;
+    } catch (_) {
+      final places = await searchForWeatherPlaces(q, cancelToken: cancelToken);
+      final peaks = await searchForWeatherPeaks(q, cancelToken: cancelToken);
+      final merged = _mergePreferPeaks(peaks, places, maxItems: 18);
+      _remember(cacheKey, merged);
+      return merged;
+    }
   }
 
   static OsmPlaceResult _preferUkrainianLabel(

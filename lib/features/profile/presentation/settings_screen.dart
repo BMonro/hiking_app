@@ -1,22 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-class SettingsScreen extends StatefulWidget {
+import '../../../core/theme/app_theme.dart';
+import '../../../core/notifications/notification_preferences_provider.dart';
+
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _scrollController = ScrollController();
   final _notificationsSectionKey = GlobalKey();
 
   bool _darkTheme = false;
-  bool _weatherAlerts = true;
-  bool _newAchievements = true;
-  bool _recommendations = false;
   bool _autoSOS = true;
   bool _publicProfile = true;
   bool _showEmail = false;
@@ -60,6 +61,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     TextFormField(
                       controller: newController,
                       obscureText: true,
+                      enableInteractiveSelection: false,
+                      enableSuggestions: false,
+                      autocorrect: false,
                       decoration: const InputDecoration(
                         labelText: 'Новий пароль',
                         prefixIcon: Icon(Icons.lock_outline),
@@ -74,6 +78,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     TextFormField(
                       controller: confirmController,
                       obscureText: true,
+                      enableInteractiveSelection: false,
+                      enableSuggestions: false,
+                      autocorrect: false,
                       decoration: const InputDecoration(
                         labelText: 'Підтвердіть пароль',
                         prefixIcon: Icon(Icons.lock_outline),
@@ -263,6 +270,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         title: const Text('Налаштування'),
         elevation: 0,
       ),
@@ -327,25 +336,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
               key: _notificationsSectionKey,
               title: 'Сповіщення',
               children: [
-                _SettingsToggleTile(
-                  title: 'Попередження про погоду',
-                  icon: Icons.cloud_outlined,
-                  value: _weatherAlerts,
-                  onChanged: (value) => setState(() => _weatherAlerts = value),
+                _SettingsTile(
+                  title: 'Усі сповіщення',
+                  description: 'Історія та непрочитані',
+                  icon: Icons.inbox_outlined,
+                  onTap: () => context.push('/notifications'),
                 ),
                 _SettingsToggleTile(
                   title: 'Нові досягнення',
                   icon: Icons.emoji_events_outlined,
-                  value: _newAchievements,
-                  onChanged: (value) =>
-                      setState(() => _newAchievements = value),
+                  value: ref.watch(notificationPreferencesProvider).newAchievements,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setNewAchievements(v),
+                ),
+                _SettingsToggleTile(
+                  title: 'Заявки на похід',
+                  icon: Icons.person_add_alt_1_outlined,
+                  value: ref.watch(notificationPreferencesProvider).tripRequests,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setTripRequests(v),
+                ),
+                _SettingsToggleTile(
+                  title: 'Схвалення / відхилення',
+                  icon: Icons.how_to_reg_outlined,
+                  value: ref.watch(notificationPreferencesProvider).tripDecisions,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setTripDecisions(v),
+                ),
+                _SettingsToggleTile(
+                  title: 'Повідомлення в чаті походу',
+                  icon: Icons.chat_bubble_outline,
+                  value: ref.watch(notificationPreferencesProvider).tripChatMessages,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setTripChatMessages(v),
+                ),
+                _SettingsToggleTile(
+                  title: 'Попередження про погоду',
+                  icon: Icons.cloud_outlined,
+                  value: ref.watch(notificationPreferencesProvider).weatherAlerts,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setWeatherAlerts(v),
                 ),
                 _SettingsToggleTile(
                   title: 'Рекомендації ШІ',
                   icon: Icons.smart_toy_outlined,
-                  value: _recommendations,
-                  onChanged: (value) =>
-                      setState(() => _recommendations = value),
+                  value: ref.watch(notificationPreferencesProvider).aiRecommendations,
+                  onChanged: (v) =>
+                      ref.read(notificationPreferencesProvider.notifier).setAiRecommendations(v),
                 ),
               ],
             ),

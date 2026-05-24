@@ -8,10 +8,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../../core/network/network_status_provider.dart';
 import '../../routes/domain/route_detail.dart';
 import '../../routes/presentation/routes_provider.dart';
 import '../data/offline_map_service.dart';
 import '../data/offline_tile_provider.dart';
+import '../domain/offline_route_path.dart';
 import '../data/overpass_poi_repository.dart';
 import '../data/routing_repository.dart';
 import '../domain/hike_session_summary.dart';
@@ -46,7 +48,14 @@ class NavigationScreen extends ConsumerStatefulWidget {
   /// Якщо задано — підвантажити збережений маршрут з БД і показати на карті.
   final String? routeIdToFollow;
 
-  const NavigationScreen({super.key, this.routeIdToFollow});
+  /// Лише з вкладки «Офлайн» — навігація без мережі (окремий режим).
+  final bool forceOfflineNavigation;
+
+  const NavigationScreen({
+    super.key,
+    this.routeIdToFollow,
+    this.forceOfflineNavigation = false,
+  });
 
   @override
   ConsumerState<NavigationScreen> createState() => _NavigationScreenState();
@@ -86,6 +95,10 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
   OfflineTileProvider? _offlineTileProvider;
 
+  /// Навігація лише з локального пакета (без Supabase, маршрутизації, POI, OSM).
+  bool _offlineOnlyNav = false;
+  String? _offlineRouteTitle;
+
   static const double _finishRadiusM = 80;
   static const double _offRouteThresholdM = 45;
   static const double _offRouteRerouteImmediatelyM = 75;
@@ -94,6 +107,38 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   static const Duration _minSessionForSummary = Duration(minutes: 1);
 
   static const double _navFollowZoom = 17;
+
+  /// Офлайн-пакет містить тайли лише до [OfflineMapService.maxZoom].
+  double get _followZoom =>
+      _offlineOnlyNav
+          ? OfflineMapService.maxZoom.toDouble()
+          : _navFollowZoom;
+
+  /// Центр камери: офлайн-тайли лише вздовж маршруту (GPS емулятора часто «в іншій країні»).
+  LatLng _mapCenterForFollow(LatLng user, List<LatLng> route, int progressIdx) {
+    if (!_offlineOnlyNav) return user;
+    final idx = progressIdx.clamp(0, route.length - 1);
+    return route[idx];
+  }
+
+  void _warnIfGpsFarFromRoute(LatLng user, List<LatLng> route, int progressIdx) {
+    if (!_offlineOnlyNav || !mounted) return;
+    const dist = Distance();
+    final onRoute = route[progressIdx.clamp(0, route.length - 1)];
+    final meters = dist.as(LengthUnit.Meter, user, onRoute);
+    if (meters > 1500) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'GPS далеко від маршруту (~${(meters / 1000).toStringAsFixed(1)} км). '
+            'Офлайн-карта показує лише зону маршруту. '
+            'У емуляторі встановіть координати біля треку (Extended Controls → Location).',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
 
   // Карпати — початкова позиція карти
   static const LatLng _defaultCenter = LatLng(48.1588, 24.4671);
@@ -104,32 +149,45 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     final id = widget.routeIdToFollow?.trim();
     if (id != null && id.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _loadRouteFromDatabase(id);
+        if (widget.forceOfflineNavigation) {
+          _loadOfflineRoutePackage(id);
+        } else {
+          _loadRouteFromDatabase(id);
+        }
       });
     }
   }
 
+  /// Навігація по маршруту з БД; без мережі — локальний офлайн-пакет.
   Future<void> _loadRouteFromDatabase(String routeId) async {
     setState(() => _routeLoading = true);
     try {
       final offlineService = ref.read(offlineMapServiceProvider);
       RouteDetail? detail;
       try {
-        detail = await ref.read(routeDetailProvider(routeId).future);
+        detail = await ref
+            .read(routeDetailProvider(routeId).future)
+            .timeout(const Duration(seconds: 6));
       } catch (_) {
         detail = null;
       }
 
       if (!mounted) return;
       if (detail == null) {
-        final hasMap = await offlineService.hasOfflineMap(routeId);
+        final offlinePath = await offlineService.loadOfflinePath(routeId);
+        if (offlinePath != null && offlinePath.isValid) {
+          await _enterOfflineNavigation(
+            routeId: routeId,
+            offlinePath: offlinePath,
+            offlineService: offlineService,
+          );
+          return;
+        }
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text(
-              hasMap
-                  ? 'Офлайн-карта є, але маршрут потрібно завантажити з інтернету'
-                  : 'Маршрут не знайдено',
+              'Маршрут недоступний без інтернету. Завантажте офлайн-пакет на екрані маршруту.',
             ),
           ),
         );
@@ -197,10 +255,97 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
+  /// Офлайн-навігація з локального пакета (вкладка «Офлайн» у «Мої маршрути»).
+  Future<void> _loadOfflineRoutePackage(String routeId) async {
+    setState(() => _routeLoading = true);
+    try {
+      final offlineService = ref.read(offlineMapServiceProvider);
+      final hasOfflinePackage = await offlineService.hasOfflineMap(routeId);
+      final offlinePath = await offlineService.loadOfflinePath(routeId);
+
+      if (!hasOfflinePackage ||
+          offlinePath == null ||
+          !offlinePath.isValid) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              offlinePath != null
+                  ? 'Збережений шлях пошкоджено. Завантажте офлайн-пакет знову.'
+                  : 'Офлайн-пакет не знайдено. Завантажте його з інтернету.',
+            ),
+          ),
+        );
+        setState(() => _routeLoading = false);
+        return;
+      }
+
+      await _enterOfflineNavigation(
+        routeId: routeId,
+        offlinePath: offlinePath,
+        offlineService: offlineService,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _routeLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не вдалося завантажити офлайн-маршрут: $e')),
+      );
+    }
+  }
+
+  Future<void> _enterOfflineNavigation({
+    required String routeId,
+    required OfflineRoutePath offlinePath,
+    required OfflineMapService offlineService,
+  }) async {
+    await _activateOfflineTilesIfNeeded(
+      routeId,
+      offlineService,
+      offlineOnly: true,
+    );
+    if (!mounted) return;
+
+    final routePts = offlinePath.polyline;
+    final waypointPositions = offlinePath.waypoints.length >= 2
+        ? offlinePath.waypoints.map((w) => w.position).toList()
+        : <LatLng>[];
+    final navWps = waypointPositions.length >= 2
+        ? waypointPositions
+        : [routePts.first, routePts.last];
+
+    setState(() {
+      _offlineOnlyNav = true;
+      _offlineRouteTitle = offlinePath.title;
+      _followedRouteDetail = null;
+      _routePoints = routePts;
+      _navWaypoints = navWps;
+      _routeLoading = false;
+      _routeNavActive = false;
+      _routeProgressIndex = 0;
+      _showPoiLayer = false;
+      _pois = [];
+      _poiLoading = false;
+      _resetNavSession();
+      _resetRerouteState();
+    });
+    _fitRouteOnMap();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Офлайн-режим: ${offlinePath.title}'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   Future<void> _activateOfflineTilesIfNeeded(
     String routeId,
-    OfflineMapService offlineService,
-  ) async {
+    OfflineMapService offlineService, {
+    bool offlineOnly = false,
+  }) async {
     if (!await offlineService.hasOfflineMap(routeId)) return;
     await offlineService.ensureOfflineRootCached();
     if (!mounted) return;
@@ -208,6 +353,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     _offlineTileProvider = OfflineTileProvider(
       routeId: routeId,
       offlineMapService: offlineService,
+      offlineOnly: offlineOnly,
     );
     setState(() {});
   }
@@ -233,6 +379,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       _routeNavActive = false;
       _routeProgressIndex = 0;
       _followedRouteDetail = null;
+      _offlineOnlyNav = false;
+      _offlineRouteTitle = null;
       _resetNavSession();
       _resetRerouteState();
     });
@@ -302,6 +450,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
     final route = _followedRouteDetail?.route;
     final title = route?.title ??
+        _offlineRouteTitle ??
         'Похід ${startedAt.day}.${startedAt.month}.${startedAt.year}';
     final distanceKm = math.max(traveledM / 1000, 0.01);
     final durationHours = math.max(duration.inSeconds / 3600.0, 0.05);
@@ -350,7 +499,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       final user = LatLng(pos.latitude, pos.longitude);
       final idx = _nearestForwardRouteIndex(user, pts, 0);
       setState(() => _routeProgressIndex = idx);
-      _mapController.move(user, _navFollowZoom);
+      _warnIfGpsFarFromRoute(user, pts, idx);
+      _mapController.move(_mapCenterForFollow(user, pts, idx), _followZoom);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -503,6 +653,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   Future<void> _maybeRerouteFromPosition(LatLng user) async {
+    if (_offlineOnlyNav) return;
     if (!_routeNavActive || _isRerouting || _routePoints == null) return;
 
     final now = DateTime.now();
@@ -635,8 +786,16 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     return s.x > 0 && s.y > 0;
   }
 
+  bool _onlineMapFeaturesEnabled() {
+    final hasNetwork = ref.read(hasNetworkProvider).value ?? false;
+    return isOnlineOnlyFeatureAvailable(
+      hasNetwork: hasNetwork,
+      offlineNavigation: _offlineOnlyNav,
+    );
+  }
+
   void _schedulePoiReload(MapCamera camera) {
-    if (!_showPoiLayer) return;
+    if (!_showPoiLayer || !_onlineMapFeaturesEnabled()) return;
     if (!_isMapCameraReady(camera)) return;
     _poiDebounce?.cancel();
     _poiDebounce = Timer(const Duration(milliseconds: 750), () {
@@ -649,7 +808,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   Future<void> _loadPois(MapCamera camera) async {
-    if (!_showPoiLayer || !mounted) return;
+    if (!_showPoiLayer || !_onlineMapFeaturesEnabled() || !mounted) return;
 
     if (!_isMapCameraReady(camera)) {
       return;
@@ -736,6 +895,18 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   void _togglePoiLayer() {
+    final hasNetwork = ref.read(hasNetworkProvider).value ?? false;
+    if (!isOnlineOnlyFeatureAvailable(
+      hasNetwork: hasNetwork,
+      offlineNavigation: _offlineOnlyNav,
+    )) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Точки інтересу недоступні без інтернету'),
+        ),
+      );
+      return;
+    }
     setState(() {
       _showPoiLayer = !_showPoiLayer;
       if (!_showPoiLayer) {
@@ -751,6 +922,16 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   Future<void> _fetchAndShowRoute(LatLng from, LatLng to) async {
+    if (_offlineOnlyNav) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Побудова нового маршруту на карті потребує інтернету',
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _routeLoading = true);
     try {
       final points = await _routingRepo.fetchHikingRoute(from, to);
@@ -987,20 +1168,44 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   @override
   Widget build(BuildContext context) {
     final locationAsync = ref.watch(locationProvider);
+    final hasNetwork = ref.watch(hasNetworkProvider).value ?? true;
+    final onlineFeatures = isOnlineOnlyFeatureAvailable(
+      hasNetwork: hasNetwork,
+      offlineNavigation: _offlineOnlyNav,
+    );
+    ref.listen<AsyncValue<bool>>(hasNetworkProvider, (previous, next) {
+      final online = next.value ?? true;
+      if (!isOnlineOnlyFeatureAvailable(
+        hasNetwork: online,
+        offlineNavigation: _offlineOnlyNav,
+      )) {
+        if (_showPoiLayer || _pois.isNotEmpty || _poiLoading) {
+          setState(() {
+            _showPoiLayer = false;
+            _pois = [];
+            _poiLoading = false;
+          });
+        }
+      }
+    });
 
     ref.listen<AsyncValue<Position?>>(locationProvider, (previous, next) {
       next.whenData((pos) {
         if (pos == null) return;
-        _lastKnownUserPosition = LatLng(pos.latitude, pos.longitude);
+        final user = LatLng(pos.latitude, pos.longitude);
+        _lastKnownUserPosition = user;
+
         if (!_routeNavActive || _routePoints == null) return;
         final pts = _routePoints!;
-        final user = _lastKnownUserPosition!;
         final newIdx =
             _nearestForwardRouteIndex(user, pts, _routeProgressIndex);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_routeNavActive) return;
           setState(() => _routeProgressIndex = newIdx);
-          _mapController.move(user, _navFollowZoom);
+          _mapController.move(
+            _mapCenterForFollow(user, pts, newIdx),
+            _followZoom,
+          );
           _checkAutoRouteCompletion();
           unawaited(_maybeRerouteFromPosition(user));
         });
@@ -1008,7 +1213,34 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Навігація')),
+      appBar: AppBar(
+        title: const Text('Навігація'),
+        actions: [
+          if (_offlineOnlyNav)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange.shade700),
+                  ),
+                  child: Text(
+                    'Офлайн',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.orange.shade900,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       body: Stack(
         children: [
           FlutterMap(
@@ -1030,6 +1262,12 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.hiking_app',
                 tileProvider: _offlineTileProvider,
+                minZoom: _offlineOnlyNav
+                    ? OfflineMapService.minZoom.toDouble()
+                    : 1,
+                maxZoom: _offlineOnlyNav
+                    ? OfflineMapService.maxZoom.toDouble()
+                    : 22,
               ),
               if (_routePoints != null && _routePoints!.length >= 2)
                 PolylineLayer(
@@ -1045,7 +1283,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                           ),
                         ],
                 ),
-              if (_showPoiLayer)
+              if (_showPoiLayer && onlineFeatures)
                 MarkerLayer(
                   markers: _pois
                       .map(
@@ -1119,27 +1357,10 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                     markers: [
                       Marker(
                         point: currentLatLng,
-                        width: 40,
-                        height: 40,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2E7D32),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color:
-                                    Colors.black.withValues(alpha: 0.3),
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.navigation,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        child: const _UserLocationDot(),
                       ),
                     ],
                   );
@@ -1366,55 +1587,59 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                         tooltip: 'Моя позиція',
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Material(
-                      elevation: 2,
-                      borderRadius: BorderRadius.circular(12),
-                      color: _showPoiLayer
-                          ? const Color(0xFFE8F5E9)
-                          : Colors.white,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          IconButton(
-                            onPressed: _togglePoiLayer,
-                            icon: Icon(
-                              _showPoiLayer
-                                  ? Icons.interests
-                                  : Icons.interests_outlined,
+                    if (onlineFeatures) ...[
+                      const SizedBox(width: 8),
+                      Material(
+                        elevation: 2,
+                        borderRadius: BorderRadius.circular(12),
+                        color: _showPoiLayer
+                            ? const Color(0xFFE8F5E9)
+                            : Colors.white,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            IconButton(
+                              onPressed: _togglePoiLayer,
+                              icon: Icon(
+                                _showPoiLayer
+                                    ? Icons.interests
+                                    : Icons.interests_outlined,
+                              ),
+                              color: _showPoiLayer
+                                  ? const Color(0xFF1B5E20)
+                                  : const Color(0xFF2E7D32),
+                              tooltip: 'Точки інтересу',
                             ),
-                            color: _showPoiLayer
-                                ? const Color(0xFF1B5E20)
-                                : const Color(0xFF2E7D32),
-                            tooltip: 'Точки інтересу',
-                          ),
-                          if (_poiLoading)
-                            const Positioned(
-                              right: 6,
-                              top: 6,
-                              child: SizedBox(
-                                width: 10,
-                                height: 10,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                            if (_poiLoading)
+                              const Positioned(
+                                right: 6,
+                                top: 6,
+                                child: SizedBox(
+                                  width: 10,
+                                  height: 10,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Material(
-                      elevation: 2,
-                      borderRadius: BorderRadius.circular(12),
-                      color: Colors.white,
-                      child: IconButton(
-                        onPressed: () => context.push('/weather'),
-                        icon: const Icon(Icons.wb_sunny_outlined),
-                        color: const Color(0xFF2E7D32),
-                        tooltip: 'Погода',
+                    ],
+                    if (onlineFeatures) ...[
+                      const SizedBox(width: 8),
+                      Material(
+                        elevation: 2,
+                        borderRadius: BorderRadius.circular(12),
+                        color: Colors.white,
+                        child: IconButton(
+                          onPressed: () => context.push('/weather'),
+                          icon: const Icon(Icons.wb_sunny_outlined),
+                          color: const Color(0xFF2E7D32),
+                          tooltip: 'Погода',
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -1440,10 +1665,49 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     try {
       final cam = _mapController.camera;
       final minZ = cam.minZoom ?? 1;
-      final maxZ = cam.maxZoom ?? 22;
+      var maxZ = cam.maxZoom ?? 22;
+      if (_offlineOnlyNav) {
+        maxZ = math.min(maxZ, OfflineMapService.maxZoom.toDouble());
+      }
       final z = (cam.zoom + delta).clamp(minZ, maxZ);
       if ((z - cam.zoom).abs() < 0.01) return;
       _mapController.move(cam.center, z);
     } catch (_) {}
+  }
+}
+
+/// Маркер поточної позиції: радіальний градієнт від центру до краю.
+class _UserLocationDot extends StatelessWidget {
+  const _UserLocationDot();
+
+  static const double _size = 28;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: _size,
+      height: _size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const RadialGradient(
+          center: Alignment.center,
+          radius: 0.55,
+          colors: [
+            Color(0xFFB9F6CA),
+            Color(0xFF66BB6A),
+            Color(0xFF1B5E20),
+          ],
+          stops: [0.0, 0.45, 1.0],
+        ),
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
   }
 }

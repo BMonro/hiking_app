@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/validation/form_validators.dart';
 import '../../domain/chat_message.dart';
 import '../ai_providers.dart';
 
@@ -195,7 +196,16 @@ class _ChatInputBarState extends ConsumerState<_ChatInputBar> {
   Future<void> _send() async {
     final text = _controller.text;
     final sending = ref.read(aiChatSendingProvider);
-    if (text.trim().isEmpty || sending) return;
+    final promptError = FormValidators.aiPrompt(text);
+    if (promptError != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(promptError)),
+        );
+      }
+      return;
+    }
+    if (sending) return;
     _controller.clear();
     await ref.read(aiChatProvider.notifier).send(text);
     _scrollChatToEnd();
@@ -222,6 +232,9 @@ class _ChatInputBarState extends ConsumerState<_ChatInputBar> {
               focusNode: _focusNode,
               minLines: 1,
               maxLines: 3,
+              maxLength: 4000,
+              buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+                  null,
               textInputAction: TextInputAction.send,
               onSubmitted: (sending || !aiReady) ? null : (_) => _send(),
               decoration: InputDecoration(

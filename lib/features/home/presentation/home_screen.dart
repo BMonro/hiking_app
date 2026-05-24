@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../ai/presentation/ai_providers.dart';
 import '../../ai/presentation/widgets/ai_chat_panel.dart';
 import '../../ai/presentation/widgets/recommended_routes_section.dart';
@@ -41,8 +42,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       backgroundColor: const Color(0xFFFAFAF7),
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFFAFAF7),
-        title: const Text('Головна'),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
+        title: const SizedBox.shrink(),
+        toolbarHeight: 8,
+        elevation: 0,
       ),
       body: RefreshIndicator(
               onRefresh: () async {

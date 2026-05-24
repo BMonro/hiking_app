@@ -1,9 +1,12 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/validation/form_validators.dart';
+import '../data/auth_service.dart';
 import 'widgets/auth_form_field.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -14,6 +17,7 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _auth = AuthService();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
@@ -21,9 +25,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
   String? _emailError;
   String? _passwordError;
+  StreamSubscription<AuthState>? _authSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (!_isGoogleLoading || !mounted) return;
+      switch (data.event) {
+        case AuthChangeEvent.signedIn:
+        case AuthChangeEvent.signedOut:
+          setState(() => _isGoogleLoading = false);
+        default:
+          break;
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -37,23 +58,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   bool _validateForm({required String email, required String password}) {
-    var ok = true;
-    String? emailError;
-    String? passwordError;
-
-    if (email.isEmpty) {
-      emailError = 'Заповніть email';
-      ok = false;
-    } else if (!_isValidEmail(email)) {
-      emailError = 'Введіть коректну електронну пошту';
-      ok = false;
-    }
-
-    if (password.isEmpty) {
-      passwordError = 'Заповніть пароль';
-      ok = false;
-    }
-
+    final emailError = FormValidators.email(email);
+    final passwordError = FormValidators.password(password);
+    final ok = emailError == null && passwordError == null;
     setState(() {
       _emailError = emailError;
       _passwordError = passwordError;
@@ -71,14 +78,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: password,
-      );
+      await _auth.signInWithPassword(email: email, password: password);
       if (mounted) context.go('/home');
     } on AuthException catch (e) {
       final msg = _mapAuthError(e.message);
       final raw = e.message.toLowerCase();
+      if (raw.contains('email not confirmed') && mounted) {
+        await _offerResendConfirmation(email);
+      }
       setState(() {
         if (raw.contains('email not confirmed') ||
             raw.contains('unable to validate email') ||
@@ -99,21 +106,59 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _offerResendConfirmation(String email) async {
+    final resend = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Підтвердіть email'),
+        content: const Text(
+          'Акаунт ще не активований. Відкрийте лист підтвердження на цьому телефоні '
+          '(посилання має відкрити застосунок Hikora). Можна надіслати лист повторно.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Закрити'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Надіслати знову'),
+          ),
+        ],
+      ),
+    );
+    if (resend != true || !mounted) return;
+    try {
+      await _auth.resendSignupConfirmation(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Лист підтвердження надіслано повторно')),
+        );
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        _showGlobalError(_mapAuthError(e.message));
+      }
+    } catch (_) {
+      if (mounted) {
+        _showGlobalError('Не вдалося надіслати лист');
+      }
+    }
+  }
+
   Future<void> _submitGoogle() async {
     setState(() => _isGoogleLoading = true);
     try {
-      final launched = await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'io.supabase.flutter://login-callback/',
-      );
+      final launched = await _auth.signInWithGoogle();
       if (!launched && mounted) {
         _showGlobalError('Не вдалося відкрити сторінку входу Google');
+        setState(() => _isGoogleLoading = false);
       }
     } on AuthException catch (e) {
       _showGlobalError(_mapAuthError(e.message));
+      if (mounted) setState(() => _isGoogleLoading = false);
     } catch (_) {
       _showGlobalError('Не вдалося увійти через Google');
-    } finally {
       if (mounted) setState(() => _isGoogleLoading = false);
     }
   }
@@ -121,21 +166,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _resetPassword() async {
     final email = _normalizeEmail(_emailController.text);
     _clearFieldErrors();
-    if (email.isEmpty || !_isValidEmail(email)) {
-      setState(() {
-        _emailError = email.isEmpty
-            ? 'Введіть email для відновлення паролю'
-            : 'Введіть коректну електронну пошту';
-      });
+    final emailError = FormValidators.email(email);
+    if (emailError != null) {
+      setState(() => _emailError = emailError);
       return;
     }
     try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(
-        email,
-        redirectTo: kIsWeb
-            ? null
-            : 'io.supabase.flutter://login-callback/',
-      );
+      await _auth.resetPassword(email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Лист для відновлення надіслано')),
@@ -178,11 +215,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     }
     return buf.toString();
-  }
-
-  bool _isValidEmail(String email) {
-    return RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-        .hasMatch(email);
   }
 
   String _mapAuthError(String message) {

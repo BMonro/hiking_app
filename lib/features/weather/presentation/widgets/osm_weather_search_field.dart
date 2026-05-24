@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+
+import '../../../../core/validation/form_validators.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../routes/data/osm_nominatim_service.dart';
@@ -319,6 +321,9 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
         TextField(
           controller: widget.controller,
           focusNode: _focus,
+          maxLength: 120,
+          buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+              null,
           decoration: InputDecoration(
             hintText: 'Місто, село або вершина…',
             prefixIcon: const Icon(Icons.search),
@@ -349,6 +354,16 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
             ),
           ),
           onChanged: (value) {
+            final err = FormValidators.searchQuery(value);
+            if (err != null && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(err),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
             widget.onTextChanged?.call(value);
             _scheduleSearch(value);
           },

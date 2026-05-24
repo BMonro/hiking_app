@@ -1,32 +1,32 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/config/supabase_config.dart';
+import 'core/logging/app_log.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
-import 'core/config/supabase_config.dart';
 
 void main() {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      await Hive.initFlutter();
 
       try {
+        // PKCE: Google OAuth і підтвердження email на цьому телефоні (deep link ?code=).
+        // Implicit на Android часто губить #access_token у intent — вхід не завершується.
         await Supabase.initialize(
           url: SupabaseConfig.url,
           anonKey: SupabaseConfig.anonKey,
-          // Implicit: листи підтвердження/скидання пароля працюють у будь-якому браузері.
-          // PKCE прив’язує посилання до одного пристрою (code_verifier) → otp_expired на іншому.
           authOptions: const FlutterAuthClientOptions(
-            authFlowType: AuthFlowType.implicit,
+            authFlowType: AuthFlowType.pkce,
           ),
         );
       } catch (e, st) {
-        if (kDebugMode) {
-          debugPrint('Supabase.initialize failed: $e\n$st');
-        }
+        appLog('Supabase.initialize failed', e, st);
         runApp(_StartupErrorApp(message: e.toString()));
         return;
       }
@@ -38,9 +38,7 @@ void main() {
       );
     },
     (error, stack) {
-      if (kDebugMode) {
-        debugPrint('Uncaught error: $error\n$stack');
-      }
+      appLog('Uncaught error', error, stack);
     },
   );
 }
@@ -85,7 +83,7 @@ class MyApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
     return MaterialApp.router(
-      title: 'HikingApp',
+      title: 'Hikora',
       theme: AppTheme.lightTheme,
       routerConfig: router,
       debugShowCheckedModeBanner: false,

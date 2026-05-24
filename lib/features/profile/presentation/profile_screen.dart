@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/notifications/notifications_provider.dart';
 import 'widgets/profile_avatar.dart';
 
 final profileProvider = FutureProvider((ref) async {
@@ -21,13 +23,17 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(notificationsRealtimeProvider);
     final profileAsync = ref.watch(profileProvider);
+    final unreadAsync = ref.watch(unreadNotificationsCountProvider);
     final user = Supabase.instance.client.auth.currentUser;
+    final unread = unreadAsync.valueOrNull ?? 0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F6F5),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: const Text(
           'Профіль',
@@ -38,6 +44,28 @@ class ProfileScreen extends ConsumerWidget {
           ),
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Сповіщення',
+            onPressed: () => context.push('/notifications'),
+            icon: Badge(
+              isLabelVisible: unread > 0,
+              backgroundColor: const Color(0xFFFF6D00),
+              label: Text(
+                unread > 9 ? '9+' : '$unread',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                ),
+              ),
+              child: const Icon(
+                Icons.notifications_active_outlined,
+                color: Color(0xFF5E35B1),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -305,6 +333,13 @@ class ProfileScreen extends ConsumerWidget {
               iconColor: const Color(0xFF4F83CC),
               title: 'Досягнення',
               onTap: () => context.go('/achievements'),
+            ),
+            const SizedBox(height: 10),
+            _MenuTile(
+              icon: Icons.notifications_outlined,
+              iconColor: const Color(0xFF5C6BC0),
+              title: 'Сповіщення',
+              onTap: () => context.push('/notifications'),
             ),
             const SizedBox(height: 10),
             _MenuTile(

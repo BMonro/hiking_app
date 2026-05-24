@@ -1,0 +1,7 @@
+# Скопіюйте як key.properties (файл у .gitignore) після створення keystore:
+#   .\create_release_keystore.ps1
+#
+storePassword=ЗМІНІТЬ_ПАРОЛЬ
+keyPassword=ЗМІНІТЬ_ПАРОЛЬ
+keyAlias=hikora
+storeFile=app/hikora-release.keystore

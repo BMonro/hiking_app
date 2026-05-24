@@ -26,6 +26,7 @@ dependencies:
   
   # supabase
   supabase_flutter: ^2.5.0
+  app_links: ^7.0.0
   
   # http запити
   dio: ^5.4.3

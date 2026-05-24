@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/network/network_status_provider.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/offline_only_message.dart';
 import 'route_weather_provider.dart';
 
 class RouteWeatherScreen extends ConsumerStatefulWidget {
@@ -19,23 +22,60 @@ class RouteWeatherScreen extends ConsumerStatefulWidget {
 class _RouteWeatherScreenState extends ConsumerState<RouteWeatherScreen> {
   @override
   Widget build(BuildContext context) {
-    final asyncWeather = ref.watch(routeOpenWeatherProvider(widget.routeId));
+    final hasNetwork = ref.watch(hasNetworkProvider).value ?? true;
+    final weatherAsync = ref.watch(routeOpenWeatherProvider(widget.routeId));
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Погода на маршруті',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        title: weatherAsync.when(
+          loading: () => const Text(
+            'Погода на маршруті',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          error: (_, __) => const Text(
+            'Погода на маршруті',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          data: (data) => Text(
+            data?.routeTitle ?? 'Погода на маршруті',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),
       ),
-      body: asyncWeather.when(
+      body: !hasNetwork
+          ? const OfflineOnlyMessage(
+              title: 'Погода на маршруті недоступна офлайн',
+              subtitle:
+                  'Підключіть інтернет, щоб переглянути прогноз для точок маршруту.',
+            )
+          : _RouteWeatherBody(routeId: widget.routeId),
+    );
+  }
+}
+
+class _RouteWeatherBody extends ConsumerWidget {
+  final String routeId;
+
+  const _RouteWeatherBody({required this.routeId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncWeather = ref.watch(routeOpenWeatherProvider(routeId));
+
+    return asyncWeather.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(
           child: Padding(
@@ -55,14 +95,6 @@ class _RouteWeatherScreenState extends ConsumerState<RouteWeatherScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  data.routeTitle,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
                 const Text(
                   'Поточна погода (OpenWeather) для координат кожної точки маршруту.',
                   style: TextStyle(fontSize: 13, color: Colors.black54),
@@ -166,7 +198,6 @@ class _RouteWeatherScreenState extends ConsumerState<RouteWeatherScreen> {
             ),
           );
         },
-      ),
     );
   }
 }

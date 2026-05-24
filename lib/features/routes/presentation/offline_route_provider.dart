@@ -5,41 +5,13 @@ import 'routes_provider.dart';
 
 final routeOfflineStatusProvider =
     FutureProvider.family<bool, String>((ref, routeId) async {
-  final local =
-      await ref.watch(offlineMapServiceProvider).hasOfflineMap(routeId);
-  if (local) return true;
-  return ref.watch(routesRepositoryProvider).isRouteOffline(routeId);
+  return ref.watch(offlineMapServiceProvider).hasOfflineMap(routeId);
 });
 
-/// Локально збережені **карти** (тайли), не копії маршрутів.
+/// Локально збережені офлайн-пакети (тайли + шлях на карті).
 final offlineMapsProvider = FutureProvider<List<OfflineMapPackage>>((ref) async {
   ref.keepAlive();
-  final service = ref.read(offlineMapServiceProvider);
-  final local = await service.listOfflineMaps();
-  final byId = {for (final m in local) m.routeId: m};
-
-  try {
-    final remote =
-        await ref.read(routesRepositoryProvider).getOfflineRoutesFromServer();
-    for (final route in remote) {
-      if (byId.containsKey(route.id)) continue;
-      if (await service.hasOfflineMap(route.id)) {
-        final pkg = await service.getOfflineMap(route.id);
-        if (pkg != null) byId[route.id] = pkg;
-      } else {
-        byId[route.id] = OfflineMapPackage(
-          routeId: route.id,
-          title: route.title,
-        );
-      }
-    }
-  } catch (_) {}
-
-  final maps = byId.values.toList();
-  maps.sort(
-    (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-  );
-  return maps;
+  return ref.read(offlineMapServiceProvider).listOfflineMaps();
 });
 
 /// Зворотна сумісність імені (якщо десь лишилось посилання).

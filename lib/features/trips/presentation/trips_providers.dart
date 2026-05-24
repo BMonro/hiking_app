@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/trip_chat_api.dart';
 import '../data/trip_messages_repository.dart';
 
 final groupHikesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
@@ -20,10 +21,6 @@ trip_participants(user_id, status)
 final groupHikeFilterProvider = StateProvider<String>((ref) => 'all');
 final groupHikeSearchProvider = StateProvider<String>((ref) => '');
 
-/// Останнє сповіщення про похід (для SnackBar на екрані групових походів).
-final tripInAppNotificationProvider =
-    StateProvider<Map<String, dynamic>?>((ref) => null);
-
 final tripDetailProvider =
     FutureProvider.family<Map<String, dynamic>?, String>((ref, tripId) async {
   final row = await Supabase.instance.client
@@ -40,11 +37,12 @@ final tripDetailProvider =
   if (orgId != null) {
     final prof = await Supabase.instance.client
         .from('profiles')
-        .select('full_name')
+        .select('full_name, avatar_url')
         .eq('id', orgId)
         .maybeSingle();
     final n = (prof?['full_name'] as String?)?.trim();
     row['_organizer_name'] = n != null && n.isNotEmpty ? n : 'Організатор';
+    row['_organizer_avatar_url'] = prof?['avatar_url'];
   } else {
     row['_organizer_name'] = '—';
   }
@@ -55,6 +53,25 @@ final tripDetailProvider =
   final list = List<Map<String, dynamic>>.from(parts);
   row['_approved_count'] = list.where((p) => p['status'] == 'approved').length;
   row['_pending_count'] = list.where((p) => p['status'] == 'pending').length;
+
+  final uid = Supabase.instance.client.auth.currentUser?.id;
+  final status = row['status']?.toString();
+  if (uid != null && status != 'cancelled') {
+    if (row['organizer_id']?.toString() == uid) {
+      row['_can_chat'] = true;
+    } else {
+      final myPart = await Supabase.instance.client
+          .from('trip_participants')
+          .select('status')
+          .eq('trip_id', tripId)
+          .eq('user_id', uid)
+          .maybeSingle();
+      row['_can_chat'] = myPart?['status'] == 'approved';
+    }
+  } else {
+    row['_can_chat'] = false;
+  }
+
   return row;
 });
 
@@ -86,24 +103,6 @@ final tripsRealtimeSyncProvider = Provider<void>((ref) {
     }
   }
 
-  void onNotificationInsert(PostgresChangePayload payload) {
-    final record = payload.newRecord;
-    final type = record['type']?.toString() ?? '';
-    if (type == 'trip_request' ||
-        type == 'trip_approved' ||
-        type == 'trip_rejected') {
-      ref.read(tripInAppNotificationProvider.notifier).state = record;
-      ref.invalidate(groupHikesProvider);
-      final payload = record['payload'];
-      final tripId = payload is Map
-          ? payload['trip_id']?.toString()
-          : null;
-      if (tripId != null) {
-        ref.invalidate(tripDetailProvider(tripId));
-      }
-    }
-  }
-
   final channel = client
       .channel('trips-sync-$uid')
       .onPostgresChanges(
@@ -117,17 +116,6 @@ final tripsRealtimeSyncProvider = Provider<void>((ref) {
         schema: 'public',
         table: 'trips',
         callback: (_) => ref.invalidate(groupHikesProvider),
-      )
-      .onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'notifications',
-        filter: PostgresChangeFilter(
-          type: PostgresChangeFilterType.eq,
-          column: 'user_id',
-          value: uid,
-        ),
-        callback: onNotificationInsert,
       )
       .subscribe();
 
@@ -144,6 +132,7 @@ final tripMessagesProvider = AsyncNotifierProvider.family<TripMessagesNotifier,
 class TripMessagesNotifier
     extends FamilyAsyncNotifier<List<Map<String, dynamic>>, String> {
   RealtimeChannel? _channel;
+  final _chatApi = TripChatApi();
 
   @override
   Future<List<Map<String, dynamic>>> build(String tripId) async {
@@ -154,7 +143,7 @@ class TripMessagesNotifier
       }
     });
     _subscribe(tripId);
-    return fetchTripMessages(tripId);
+    return _chatApi.listMessages(tripId);
   }
 
   void _subscribe(String tripId) {
@@ -184,11 +173,13 @@ class TripMessagesNotifier
   }
 
   Future<void> send(String tripId, String content) async {
-    final uid = Supabase.instance.client.auth.currentUser!.id;
-    await Supabase.instance.client.from('messages').insert({
-      'trip_id': tripId,
-      'sender_id': uid,
-      'content': content,
-    });
+    final enriched = await _chatApi.sendMessage(
+      tripId: tripId,
+      content: content,
+    );
+    final id = enriched['id']?.toString();
+    final current = state.valueOrNull ?? [];
+    if (id != null && current.any((m) => m['id']?.toString() == id)) return;
+    state = AsyncData([...current, enriched]);
   }
 }

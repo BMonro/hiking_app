@@ -7,6 +7,10 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/validation/form_validators.dart';
+import '../../../core/widgets/app_text_form_field.dart';
+
 final journalProvider = FutureProvider((ref) async {
   ref.keepAlive();
   final userId = Supabase.instance.client.auth.currentUser!.id;
@@ -165,7 +169,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     return Scaffold(
       backgroundColor: _JournalTheme.background,
       appBar: AppBar(
-        backgroundColor: _JournalTheme.background,
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
@@ -183,13 +188,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           'Журнал',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Новий запис',
-            icon: const Icon(Icons.add),
-            onPressed: () => _showEntryDialog(context, ref),
-          ),
-        ],
       ),
       body: CustomScrollView(
         slivers: [
@@ -200,29 +198,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Мій журнал',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800,
-                            ),
+                      Expanded(
+                        child: Text(
+                          'Фіксуй маршрути, враження та спогади',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500,
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Фіксуй маршрути, враження та спогади',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                       ElevatedButton.icon(
                         onPressed: () => _showEntryDialog(context, ref),
@@ -396,6 +382,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     final isEditing = entry != null;
     final existingImageUrls = entry != null ? _extractImageUrls(entry) : <String>[];
     final selectedImages = <File>[];
+    final formKey = GlobalKey<FormState>();
 
     showModalBottomSheet(
       context: context,
@@ -434,7 +421,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
           ),
           child: SingleChildScrollView(
-            child: Column(
+            child: Form(
+              key: formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -464,8 +454,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                TextField(
+                AppTextFormField(
                   controller: titleController,
+                  validator: FormValidators.title,
                   decoration: _inputDecoration('Назва походу *'),
                 ),
                 const SizedBox(height: 12),
@@ -495,32 +486,36 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
+                      child: AppTextFormField(
                         controller: distanceController,
                         keyboardType: TextInputType.number,
+                        validator: FormValidators.journalDistance,
                         decoration: _inputDecoration('Відстань (км)'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: TextField(
+                      child: AppTextFormField(
                         controller: durationController,
                         keyboardType: TextInputType.number,
+                        validator: FormValidators.journalDuration,
                         decoration: _inputDecoration('Тривалість (год)'),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                AppTextFormField(
                   controller: ascentController,
                   keyboardType: TextInputType.number,
+                  validator: FormValidators.journalAscent,
                   decoration: _inputDecoration('Перепад висот (м)'),
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                AppTextFormField(
                   controller: notesController,
                   maxLines: 3,
+                  validator: FormValidators.notes,
                   decoration: _inputDecoration('Нотатки'),
                 ),
                 const SizedBox(height: 16),
@@ -591,12 +586,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   onPressed: () async {
-                    if (titleController.text.trim().isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Введіть назву')),
-                      );
-                      return;
-                    }
+                    if (!(formKey.currentState?.validate() ?? false)) return;
                     try {
                       final userId =
                           Supabase.instance.client.auth.currentUser!.id;
@@ -682,6 +672,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                   child: Text(isEditing ? 'Зберегти зміни' : 'Зберегти запис'),
                 ),
               ],
+            ),
             ),
           ),
         );

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../../core/theme/app_theme.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AchievementsScreen extends StatefulWidget {
@@ -45,7 +47,6 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       _loading = false;
     });
 
-    // Синхронізація у фоні — не блокує відображення бейджів.
     unawaited(_syncAchievementsInBackground(userId));
   }
 
@@ -95,7 +96,8 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAF7),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFFAFAF7),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black87),
@@ -432,9 +434,7 @@ class _AchievementDetailSheet extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: earned
-                  ? const Color(0xFFE8F5E9)
-                  : const Color(0xFFF5F5F5),
+              color: earned ? const Color(0xFFE8F5E9) : const Color(0xFFF5F5F5),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(

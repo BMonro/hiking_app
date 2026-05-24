@@ -3,6 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/validation/form_validators.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../profile/presentation/widgets/tappable_member_header.dart';
+import '../data/trip_chat_api.dart';
 import 'trips_providers.dart';
 
 class TripChatScreen extends ConsumerStatefulWidget {
@@ -44,7 +48,16 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
 
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    final messageError = FormValidators.chatMessage(text);
+    if (messageError != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(messageError)),
+        );
+      }
+      return;
+    }
+    if (_sending) return;
     setState(() => _sending = true);
     try {
       await ref
@@ -52,6 +65,12 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
           .send(widget.tripId, text);
       _controller.clear();
       _scrollToBottom();
+    } on TripChatException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -78,7 +97,8 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -131,7 +151,9 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                   itemBuilder: (context, index) {
                     final m = items[index];
                     final isMine = m['sender_id'] == myId;
+                    final senderId = m['sender_id']?.toString() ?? '';
                     final label = m['_sender_label']?.toString() ?? 'Учасник';
+                    final avatarUrl = m['_sender_avatar_url'] as String?;
                     final sent = DateTime.tryParse(m['sent_at']?.toString() ?? '');
                     final timeStr = sent == null
                         ? ''
@@ -141,9 +163,9 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                       child: Container(
                         margin: const EdgeInsets.only(bottom: 10),
                         constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.82,
+                          maxWidth: MediaQuery.of(context).size.width * 0.88,
                         ),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         decoration: BoxDecoration(
                           color: isMine
                               ? const Color(0xFF2E7D32).withValues(alpha: 0.12)
@@ -158,36 +180,21 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    label,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                      color: isMine
-                                          ? Colors.black87
-                                          : const Color(0xFF2E7D32),
-                                    ),
-                                  ),
-                                ),
-                                if (isMine)
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 6),
-                                    child: Text(
-                                      '(ви)',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  ),
-                              ],
+                            TappableMemberHeader(
+                              userId: senderId,
+                              displayName: label,
+                              avatarUrl: avatarUrl,
+                              avatarRadius: 16,
+                              showYouBadge: isMine,
+                              nameStyle: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.black87
+                                    : const Color(0xFF2E7D32),
+                              ),
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 6),
                             Text(
                               m['content']?.toString() ?? '',
                               style: const TextStyle(fontSize: 15, height: 1.35),
@@ -218,6 +225,9 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                       controller: _controller,
                       minLines: 1,
                       maxLines: 4,
+                      maxLength: 2000,
+                      buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+                          null,
                       decoration: InputDecoration(
                         hintText: 'Повідомлення…',
                         filled: true,

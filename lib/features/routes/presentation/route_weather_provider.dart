@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/backend_api.dart';
 import '../../weather/data/weather_repository.dart';
 import '../../weather/domain/weather_model.dart';
 import 'routes_provider.dart';
@@ -116,30 +117,53 @@ bool _looksLikeRain(String description) {
       d.contains('опад');
 }
 
-/// Поточна погода OpenWeather для кожної точки маршруту (за координатами).
+/// Погода на маршруті через Edge Function `weather` (action: route).
 final routeOpenWeatherProvider =
     FutureProvider.family<RouteWeatherLoaded?, String>((ref, routeId) async {
-  final detail = await ref.watch(routeDetailProvider(routeId).future);
-  if (detail == null) return null;
+  try {
+    final data = await BackendApi().invoke(
+      'weather',
+      body: {'action': 'route', 'route_id': routeId},
+      timeout: const Duration(seconds: 90),
+    );
 
-  final repo = ref.read(weatherRepositoryProvider);
-  final waypoints = detail.waypoints;
-
-  if (waypoints.isEmpty) {
-    return RouteWeatherLoaded(routeTitle: detail.route.title, points: []);
-  }
-
-  final rows = await Future.wait(
-    waypoints.map((w) async {
-      final label =
-          (w.name != null && w.name!.isNotEmpty) ? w.name! : w.typeLabelUk;
-      final weather = await repo.getWeatherByCoords(
-        w.position.latitude,
-        w.position.longitude,
+    final pointsRaw = data['points'] as List? ?? [];
+    final rows = pointsRaw.map((raw) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final weatherJson = Map<String, dynamic>.from(m['weather'] as Map);
+      return WaypointWeatherRow(
+        label: m['label']?.toString() ?? 'Точка',
+        weather: WeatherModel.fromJson(weatherJson),
       );
-      return WaypointWeatherRow(label: label, weather: weather);
-    }),
-  );
+    }).toList();
 
-  return RouteWeatherLoaded(routeTitle: detail.route.title, points: rows);
+    return RouteWeatherLoaded(
+      routeTitle: data['route_title']?.toString() ?? '',
+      points: rows,
+    );
+  } catch (_) {
+    final detail = await ref.watch(routeDetailProvider(routeId).future);
+    if (detail == null) return null;
+
+    final repo = ref.read(weatherRepositoryProvider);
+    final waypoints = detail.waypoints;
+
+    if (waypoints.isEmpty) {
+      return RouteWeatherLoaded(routeTitle: detail.route.title, points: []);
+    }
+
+    final rows = await Future.wait(
+      waypoints.map((w) async {
+        final label =
+            (w.name != null && w.name!.isNotEmpty) ? w.name! : w.typeLabelUk;
+        final weather = await repo.getWeatherByCoords(
+          w.position.latitude,
+          w.position.longitude,
+        );
+        return WaypointWeatherRow(label: label, weather: weather);
+      }),
+    );
+
+    return RouteWeatherLoaded(routeTitle: detail.route.title, points: rows);
+  }
 });

@@ -3,8 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/network/network_status_provider.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/offline_only_message.dart';
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
+import '../../navigation/data/offline_route_path_resolver.dart';
+import '../../navigation/data/routing_repository.dart';
 import 'offline_route_provider.dart';
 import 'routes_provider.dart';
 import 'routes_screen.dart' show RouteEditorScreen;
@@ -24,11 +29,27 @@ class RouteDetailsScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Маршрут',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        title: detailAsync.when(
+          loading: () => const Text(
+            'Маршрут',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          error: (_, __) => const Text(
+            'Маршрут',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          data: (detail) => Text(
+            detail?.route.title ?? 'Маршрут',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ),
       body: detailAsync.when(
@@ -63,6 +84,7 @@ class _RouteDetailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasNetwork = ref.watch(hasNetworkProvider).value ?? true;
     final route = detail.route;
     final currentUserId = Supabase.instance.client.auth.currentUser?.id;
     final isAuthor =
@@ -73,37 +95,26 @@ class _RouteDetailBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  route.title,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                  ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: route.difficultyColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: route.difficultyColor.withValues(alpha: 0.4),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: route.difficultyColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: route.difficultyColor.withValues(alpha: 0.4),
-                  ),
-                ),
-                child: Text(
-                  route.difficultyLabel,
-                  style: TextStyle(
-                    color: route.difficultyColor,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
+              child: Text(
+                route.difficultyLabel,
+                style: TextStyle(
+                  color: route.difficultyColor,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
                 ),
               ),
-            ],
+            ),
           ),
           const SizedBox(height: 8),
           Row(
@@ -192,13 +203,25 @@ class _RouteDetailBody extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => context.push('/routes/detail/$routeId/weather'),
-              icon: const Icon(Icons.wb_cloudy_outlined),
-              label: const Text('Погода на точках маршруту'),
+              onPressed: hasNetwork
+                  ? () => context.push('/routes/detail/$routeId/weather')
+                  : () => showWeatherOfflineSnackBar(context),
+              icon: Icon(
+                Icons.wb_cloudy_outlined,
+                color: hasNetwork ? const Color(0xFF1565C0) : Colors.grey,
+              ),
+              label: Text(
+                hasNetwork
+                    ? 'Погода на точках маршруту'
+                    : 'Погода (потрібен інтернет)',
+                style: TextStyle(color: hasNetwork ? null : Colors.grey[600]),
+              ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFF1565C0),
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                side: const BorderSide(color: Color(0xFF1565C0)),
+                side: BorderSide(
+                  color: hasNetwork ? const Color(0xFF1565C0) : Colors.grey.shade400,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -211,8 +234,16 @@ class _RouteDetailBody extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: () =>
-                  context.push('/navigation?routeId=${Uri.encodeComponent(routeId)}'),
+              onPressed: () async {
+                final hasOffline = await ref
+                    .read(offlineMapServiceProvider)
+                    .hasOfflineMap(routeId);
+                final offlineQ = hasOffline ? '&offline=true' : '';
+                if (!context.mounted) return;
+                context.push(
+                  '/navigation?routeId=${Uri.encodeComponent(routeId)}$offlineQ',
+                );
+              },
               icon: const Icon(Icons.map_outlined),
               label: const Text('Почати проходження'),
               style: FilledButton.styleFrom(
@@ -322,10 +353,16 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
 
     final offlineService = ref.read(offlineMapServiceProvider);
     final routesRepo = ref.read(routesRepositoryProvider);
+    final routingRepo = RoutingRepository();
 
     try {
-      await for (final progress
-          in offlineService.downloadRouteMap(widget.detail)) {
+      final pathPolyline =
+          await resolveRoutePathPolyline(widget.detail, routingRepo);
+
+      await for (final progress in offlineService.downloadRouteMap(
+        widget.detail,
+        pathPolyline: pathPolyline,
+      )) {
         if (!mounted) return;
         setState(() => _progress = progress.fraction);
       }
@@ -342,7 +379,11 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
         ..invalidate(offlineMapsProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Карту збережено для офлайн-використання')),
+        const SnackBar(
+          content: Text(
+            'Офлайн-пакет збережено: карта та лінія маршруту',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -365,7 +406,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
       builder: (ctx) => AlertDialog(
         title: const Text('Видалити офлайн-карту'),
         content: const Text(
-          'Завантажені тайли карти будуть видалені з пристрою. Деталі маршруту залишаться в каталозі онлайн.',
+          'З пристрою буде видалено завантажену карту та збережений шлях. Маршрут у каталозі залишиться.',
         ),
         actions: [
           TextButton(

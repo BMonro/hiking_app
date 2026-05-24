@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+
+import '../../../../core/validation/form_validators.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/osm_nominatim_service.dart';
@@ -13,6 +15,7 @@ class OsmRoutePointNameField extends StatefulWidget {
   final TextEditingController lonController;
   final TextEditingController altController;
   final VoidCallback onCoordinatesApplied;
+  final bool nameRequired;
 
   const OsmRoutePointNameField({
     super.key,
@@ -21,6 +24,7 @@ class OsmRoutePointNameField extends StatefulWidget {
     required this.lonController,
     required this.altController,
     required this.onCoordinatesApplied,
+    this.nameRequired = false,
   });
 
   @override
@@ -234,9 +238,12 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
+        TextFormField(
           controller: widget.nameController,
           focusNode: _focus,
+          validator: (v) =>
+              FormValidators.pointName(v, requiredField: widget.nameRequired),
+          autovalidateMode: AutovalidateMode.onUserInteraction,
           decoration: InputDecoration(
             hintText: 'Назва або пошук у OpenStreetMap…',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),

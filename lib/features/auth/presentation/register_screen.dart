@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../profile/data/avatar_storage_service.dart';
 
+import '../../../core/validation/form_validators.dart';
+import '../data/auth_service.dart';
 import 'widgets/auth_form_field.dart';
 
 /// Двокрокова реєстрація: (1) імʼя, прізвище, email, пароль
@@ -26,6 +28,8 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final _auth = AuthService();
+
   // Крок 1
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
@@ -53,6 +57,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _passwordError;
   String? _confirmPasswordError;
   String? _ageError;
+  String? _experienceError;
+  StreamSubscription<AuthState>? _authSub;
 
   static const _interests = [
     ('Природа', 'nature'),
@@ -65,10 +71,46 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (!mounted) return;
+      switch (data.event) {
+        case AuthChangeEvent.signedIn:
+          if (_isGoogleLoading) setState(() => _isGoogleLoading = false);
+          _afterGoogleSignIn();
+        case AuthChangeEvent.signedOut:
+          if (_isGoogleLoading) setState(() => _isGoogleLoading = false);
+        default:
+          break;
+      }
+    });
     if (widget.physicalStepOnly) {
       _step = 2;
       _prefillFromSession();
     }
+  }
+
+  /// Після Google на екрані реєстрації — крок 2, не «вхід» на головну.
+  Future<void> _afterGoogleSignIn() async {
+    if (widget.physicalStepOnly || _step == 2) return;
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    final meta = user.userMetadata;
+    if (meta?['onboarding_complete'] == true) return;
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('age')
+          .eq('id', user.id)
+          .maybeSingle();
+      if (profile != null && profile['age'] != null) return;
+    } catch (_) {
+      // показуємо крок 2 навіть без відповіді БД
+    }
+
+    if (!mounted) return;
+    context.go('/register?oauth=1');
   }
 
   Future<void> _prefillFromSession() async {
@@ -85,6 +127,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _emailController.dispose();
@@ -117,18 +160,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _submitGoogle() async {
     setState(() => _isGoogleLoading = true);
     try {
-      final launched = await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'io.supabase.flutter://login-callback/',
-      );
+      final launched = await _auth.signInWithGoogle();
       if (!launched && mounted) {
         _showError('Не вдалося відкрити Google');
+        setState(() => _isGoogleLoading = false);
       }
     } on AuthException catch (e) {
       _showError(_mapAuthError(e.message));
+      if (mounted) setState(() => _isGoogleLoading = false);
     } catch (_) {
       _showError('Не вдалося увійти через Google');
-    } finally {
       if (mounted) setState(() => _isGoogleLoading = false);
     }
   }
@@ -150,42 +191,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required String password,
     required String confirm,
   }) {
-    var ok = true;
-    String? firstNameError;
-    String? lastNameError;
-    String? emailError;
-    String? passwordError;
-    String? confirmPasswordError;
-
-    if (first.isEmpty) {
-      firstNameError = 'Заповніть імʼя';
-      ok = false;
-    }
-    if (last.isEmpty) {
-      lastNameError = 'Заповніть прізвище';
-      ok = false;
-    }
-    if (email.isEmpty) {
-      emailError = 'Заповніть email';
-      ok = false;
-    } else if (!_isValidEmail(email)) {
-      emailError = 'Введіть коректну електронну пошту';
-      ok = false;
-    }
-    if (password.isEmpty) {
-      passwordError = 'Заповніть пароль';
-      ok = false;
-    } else if (password.length < 6) {
-      passwordError = 'Мінімум 6 символів';
-      ok = false;
-    }
-    if (confirm.isEmpty) {
-      confirmPasswordError = 'Підтвердіть пароль';
-      ok = false;
-    } else if (password != confirm) {
-      confirmPasswordError = 'Паролі не співпадають';
-      ok = false;
-    }
+    final firstNameError =
+        FormValidators.personName(first, fieldLabel: 'імʼя');
+    final lastNameError =
+        FormValidators.personName(last, fieldLabel: 'прізвище');
+    final emailError = FormValidators.email(email);
+    final passwordError = FormValidators.password(password);
+    final confirmPasswordError =
+        FormValidators.confirmPassword(confirm, password);
+    final ok = firstNameError == null &&
+        lastNameError == null &&
+        emailError == null &&
+        passwordError == null &&
+        confirmPasswordError == null;
 
     setState(() {
       _firstNameError = firstNameError;
@@ -195,6 +213,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _confirmPasswordError = confirmPasswordError;
     });
     return ok;
+  }
+
+  Future<void> _showEmailConfirmationDialog(String email) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Підтвердіть email'),
+        content: Text(
+          'На адресу $email надіслано лист.\n\n'
+          'Відкрийте посилання на цьому телефоні — має запуститися застосунок Hikora.\n\n'
+          'Якщо лист відкривається лише в браузері без переходу в застосунок, '
+          'перевірте налаштування Supabase (файл supabase/AUTH_SETUP_UA.txt).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              try {
+                await _auth.resendSignupConfirmation(email);
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Лист надіслано повторно')),
+                  );
+                }
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('Помилка: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Надіслати знову'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (mounted) context.go('/login');
+            },
+            child: const Text('До входу'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _continueStep1() async {
@@ -218,12 +280,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
     try {
       final fullName = '$first $last'.trim();
-      final response = await Supabase.instance.client.auth.signUp(
+      final response = await _auth.signUpWithEmail(
         email: email,
         password: password,
-        emailRedirectTo: kIsWeb
-            ? null
-            : 'io.supabase.flutter://login-callback/',
         data: {
           'first_name': first,
           'last_name': last,
@@ -233,14 +292,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (response.session == null) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Перевірте пошту для підтвердження, потім увійдіть і завершіть профіль',
-              ),
-            ),
-          );
-          context.go('/login');
+          await _showEmailConfirmationDialog(email);
         }
         return;
       }
@@ -303,6 +355,79 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return 'Помилка збереження: $e';
   }
 
+  String? _resolvedFullName(
+    User user,
+    Map<String, dynamic>? existingProfile,
+  ) {
+    final meta = user.userMetadata;
+    String? nameFromMeta = meta?['full_name']?.toString().trim();
+    if (nameFromMeta == null || nameFromMeta.isEmpty) {
+      final joined = [
+        meta?['given_name'],
+        meta?['family_name'],
+      ]
+          .whereType<String>()
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .join(' ');
+      if (joined.isNotEmpty) nameFromMeta = joined;
+    }
+    if (nameFromMeta == null || nameFromMeta.isEmpty) {
+      final fn = meta?['first_name']?.toString().trim() ?? '';
+      final ln = meta?['last_name']?.toString().trim() ?? '';
+      final combined = '$fn $ln'.trim();
+      if (combined.isNotEmpty) nameFromMeta = combined;
+    }
+
+    final fromDb = (existingProfile?['full_name'] as String?)?.trim();
+    if (fromDb != null && fromDb.isNotEmpty) return fromDb;
+    if (nameFromMeta != null && nameFromMeta.isNotEmpty) return nameFromMeta;
+
+    final local =
+        '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}'
+            .trim();
+    return local.isNotEmpty ? local : null;
+  }
+
+  Future<void> _skipProfileLater() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      context.go('/login');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final existingProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final fullName = _resolvedFullName(user, existingProfile);
+
+      await Supabase.instance.client.from('profiles').upsert({
+        'id': user.id,
+        if (fullName != null) 'full_name': fullName,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(data: {'onboarding_complete': true}),
+      );
+
+      if (mounted) context.go('/home');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlySaveError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _finishStep2() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
@@ -310,12 +435,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    final age = int.tryParse(_ageController.text.trim());
-    if (age == null || age <= 0 || age > 120) {
-      setState(() => _ageError = 'Вкажіть коректний вік (1–120)');
+    final ageError = FormValidators.age(_ageController.text, requiredField: true);
+    final experienceError =
+        FormValidators.experienceText(_experienceController.text);
+    if (ageError != null || experienceError != null) {
+      setState(() {
+        _ageError = ageError;
+        _experienceError = experienceError;
+      });
       return;
     }
-    setState(() => _ageError = null);
+    setState(() {
+      _ageError = null;
+      _experienceError = null;
+    });
+    final age = int.parse(_ageController.text.trim());
 
     setState(() => _isLoading = true);
     try {
@@ -331,24 +465,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       final experienceText = _experienceController.text.trim();
-      final meta = user.userMetadata;
-      String? nameFromMeta = meta?['full_name']?.toString().trim();
-      if (nameFromMeta == null || nameFromMeta.isEmpty) {
-        final joined = [
-          meta?['given_name'],
-          meta?['family_name'],
-        ].whereType<String>().map((s) => s.trim()).where((s) => s.isNotEmpty).join(' ');
-        if (joined.isNotEmpty) nameFromMeta = joined;
-      }
-      if (nameFromMeta == null || nameFromMeta.isEmpty) {
-        final fn = meta?['first_name']?.toString().trim() ?? '';
-        final ln = meta?['last_name']?.toString().trim() ?? '';
-        final combined = '$fn $ln'.trim();
-        if (combined.isNotEmpty) nameFromMeta = combined;
-      }
-
-      final fullName = (existingProfile?['full_name'] as String?)?.trim() ??
-          nameFromMeta;
+      final fullName = _resolvedFullName(user, existingProfile);
 
       await Supabase.instance.client.from('profiles').upsert({
         'id': user.id,
@@ -410,11 +527,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     }
     return buf.toString();
-  }
-
-  bool _isValidEmail(String email) {
-    return RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-        .hasMatch(email);
   }
 
   String _mapAuthError(String message) {
@@ -703,9 +815,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
+          AuthFormField(
             controller: _experienceController,
             maxLines: 2,
+            errorText: _experienceError,
+            onChanged: (_) {
+              if (_experienceError != null) {
+                setState(() => _experienceError = null);
+              }
+            },
             decoration: _decoration(
               'Попередній досвід',
               Icons.hiking_outlined,
@@ -765,6 +883,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   )
                 : const Text('Зберегти та продовжити'),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: _isLoading ? null : _skipProfileLater,
+            child: const Text('Заповнити профіль пізніше'),
           ),
         ],
       ),

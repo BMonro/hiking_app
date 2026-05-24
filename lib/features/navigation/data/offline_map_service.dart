@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../routes/domain/route_detail.dart';
 import '../domain/offline_map_package.dart';
+import '../domain/offline_route_path.dart';
 
 class OfflineMapDownloadProgress {
   final int completed;
@@ -21,13 +22,13 @@ class OfflineMapDownloadProgress {
   double get fraction => total == 0 ? 0 : completed / total;
 }
 
-/// Завантаження та зберігання **тільки картографічних тайлів** OSM.
+/// Завантаження та зберігання офлайн-пакета: **тайли карти** + **лінія шляху** (`route_path.json`).
 class OfflineMapService {
   static const String osmTileUrlTemplate =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   static const int minZoom = 11;
   static const int maxZoom = 16;
-  static const double boundsPaddingDegrees = 0.02;
+  static const double boundsPaddingDegrees = 0.06;
 
   final Dio _dio;
 
@@ -64,9 +65,28 @@ class OfflineMapService {
     return File('${dir.path}/.complete');
   }
 
+  Future<File> _pathFile(String routeId) async {
+    final dir = await _routeDir(routeId);
+    return File('${dir.path}/route_path.json');
+  }
+
   Future<File> _legacyDetailFile(String routeId) async {
     final dir = await _routeDir(routeId);
     return File('${dir.path}/route_detail.json');
+  }
+
+  /// Збережена лінія маршруту для офлайн-навігації.
+  Future<OfflineRoutePath?> loadOfflinePath(String routeId) async {
+    await _migrateLegacyDetailIfNeeded(routeId);
+    final file = await _pathFile(routeId);
+    if (!await file.exists()) return null;
+    try {
+      final json = jsonDecode(await file.readAsString());
+      if (json is! Map) return null;
+      return _pathFromJson(Map<String, dynamic>.from(json), routeId);
+    } catch (_) {
+      return null;
+    }
   }
 
   String tileFilePath(String routeId, int z, int x, int y) {
@@ -102,12 +122,14 @@ class OfflineMapService {
       if (!await hasOfflineMap(routeId)) continue;
 
       final tileCount = await _countTiles(routeId);
+      final path = await loadOfflinePath(routeId);
       packages.add(
         OfflineMapPackage(
           routeId: meta.routeId,
           title: meta.title,
           downloadedAt: meta.downloadedAt,
           tileCount: tileCount,
+          pathPointCount: path?.polyline.length ?? meta.pathPointCount,
         ),
       );
     }
@@ -123,11 +145,13 @@ class OfflineMapService {
     await _migrateLegacyDetailIfNeeded(routeId);
     final meta = await _readMeta(routeId);
     if (meta == null) return null;
+    final path = await loadOfflinePath(routeId);
     return OfflineMapPackage(
       routeId: meta.routeId,
       title: meta.title,
       downloadedAt: meta.downloadedAt,
       tileCount: await _countTiles(routeId),
+      pathPointCount: path?.polyline.length ?? meta.pathPointCount,
     );
   }
 
@@ -144,14 +168,17 @@ class OfflineMapService {
     return bytes / (1024 * 1024);
   }
 
-  /// [detail] потрібен лише для обчислення області тайлів; на диск пишуться тайли + map_meta.
-  Stream<OfflineMapDownloadProgress> downloadRouteMap(RouteDetail detail) async* {
+  /// [pathPolyline] — лінія шляху на карті; [detail] — для bbox тайлів і назви.
+  Stream<OfflineMapDownloadProgress> downloadRouteMap(
+    RouteDetail detail, {
+    required List<LatLng> pathPolyline,
+  }) async* {
     final routeId = detail.route.id;
-    final points = _collectCoveragePoints(detail);
-    if (points.isEmpty) {
-      throw StateError('Немає координат для завантаження карти');
+    if (pathPolyline.length < 2) {
+      throw StateError('Немає лінії маршруту для збереження');
     }
 
+    final points = [...pathPolyline, ...detail.waypoints.map((w) => w.position)];
     final bounds = _boundsForPoints(points);
     final tiles = <({int z, int x, int y})>[];
     for (var z = minZoom; z <= maxZoom; z++) {
@@ -203,6 +230,16 @@ class OfflineMapService {
       );
     }
 
+    await _writePath(
+      routeId,
+      OfflineRoutePath(
+        routeId: routeId,
+        title: detail.route.title,
+        polyline: pathPolyline,
+        waypoints: detail.waypoints,
+      ),
+    );
+
     await _writeMeta(
       routeId,
       _MapMeta(
@@ -210,6 +247,7 @@ class OfflineMapService {
         title: detail.route.title,
         downloadedAt: DateTime.now(),
         tileCount: tiles.length,
+        pathPointCount: pathPolyline.length,
       ),
     );
 
@@ -243,33 +281,84 @@ class OfflineMapService {
   Future<void> _migrateLegacyDetailIfNeeded(String routeId) async {
     final legacy = await _legacyDetailFile(routeId);
     if (!await legacy.exists()) return;
-    final meta = await _metaFile(routeId);
-    if (await meta.exists()) {
-      await legacy.delete();
-      return;
+
+    final pathFile = await _pathFile(routeId);
+    if (!await pathFile.exists()) {
+      try {
+        final json = jsonDecode(await legacy.readAsString());
+        if (json is Map) {
+          final m = Map<String, dynamic>.from(json);
+          final route = m['route'];
+          final title = route is Map
+              ? route['title']?.toString() ?? 'Офлайн-маршрут'
+              : 'Офлайн-маршрут';
+
+          var polyline = <LatLng>[];
+          final rawPoly = m['polyline'];
+          if (rawPoly is List) {
+            for (final p in rawPoly) {
+              if (p is Map) {
+                final lat = (p['lat'] as num?)?.toDouble();
+                final lon = (p['lon'] as num?)?.toDouble();
+                if (lat != null && lon != null) {
+                  polyline.add(LatLng(lat, lon));
+                }
+              }
+            }
+          }
+          if (polyline.isEmpty) {
+            final geo = route is Map ? route['geojson'] : null;
+            polyline = parseRoutePolylineFromGeoJson(geo) ?? [];
+          }
+
+          final waypoints = <RouteWaypoint>[];
+          final rawWps = m['waypoints'];
+          if (rawWps is List) {
+            for (final w in rawWps) {
+              if (w is! Map) continue;
+              final wm = Map<String, dynamic>.from(w);
+              final lat = (wm['lat'] as num?)?.toDouble();
+              final lon = (wm['lon'] as num?)?.toDouble();
+              if (lat == null || lon == null) continue;
+              waypoints.add(
+                RouteWaypoint(
+                  position: LatLng(lat, lon),
+                  pointType: wm['point_type']?.toString() ?? 'viewpoint',
+                  name: wm['name']?.toString(),
+                  sortOrder: (wm['sort_order'] as num?)?.toInt() ?? 0,
+                  altitudeM: (wm['altitude_m'] as num?)?.toInt(),
+                ),
+              );
+            }
+          }
+
+          if (polyline.length < 2 && waypoints.length >= 2) {
+            polyline = waypoints.map((w) => w.position).toList();
+          }
+
+          if (polyline.length >= 2) {
+            await _writePath(
+              routeId,
+              OfflineRoutePath(
+                routeId: routeId,
+                title: title,
+                polyline: polyline,
+                waypoints: waypoints,
+              ),
+            );
+          }
+
+          final meta = await _metaFile(routeId);
+          if (!await meta.exists()) {
+            await _writeMeta(
+              routeId,
+              _MapMeta(routeId: routeId, title: title),
+            );
+          }
+        }
+      } catch (_) {}
     }
-    try {
-      final json = jsonDecode(await legacy.readAsString());
-      if (json is Map) {
-        final route = json['route'];
-        final title = route is Map
-            ? route['title']?.toString() ?? 'Офлайн-карта'
-            : 'Офлайн-карта';
-        await _writeMeta(
-          routeId,
-          _MapMeta(
-            routeId: routeId,
-            title: title,
-            downloadedAt: DateTime.now(),
-          ),
-        );
-      }
-    } catch (_) {
-      await _writeMeta(
-        routeId,
-        _MapMeta(routeId: routeId, title: 'Офлайн-карта'),
-      );
-    }
+
     await legacy.delete();
   }
 
@@ -287,6 +376,7 @@ class OfflineMapService {
             ? DateTime.tryParse(m['downloaded_at'].toString())
             : null,
         tileCount: (m['tile_count'] as num?)?.toInt() ?? 0,
+        pathPointCount: (m['path_point_count'] as num?)?.toInt() ?? 0,
       );
     } catch (_) {
       return null;
@@ -301,6 +391,7 @@ class OfflineMapService {
         'title': meta.title,
         'downloaded_at': meta.downloadedAt?.toIso8601String(),
         'tile_count': meta.tileCount,
+        'path_point_count': meta.pathPointCount,
         'min_zoom': minZoom,
         'max_zoom': maxZoom,
       }),
@@ -308,13 +399,79 @@ class OfflineMapService {
     );
   }
 
-  List<LatLng> _collectCoveragePoints(RouteDetail detail) {
-    final points = <LatLng>[];
-    if (detail.polyline != null) {
-      points.addAll(detail.polyline!);
+  Future<void> _writePath(String routeId, OfflineRoutePath path) async {
+    final file = await _pathFile(routeId);
+    await file.writeAsString(
+      jsonEncode({
+        'route_id': path.routeId,
+        'title': path.title,
+        'polyline': path.polyline
+            .map((p) => {'lat': p.latitude, 'lon': p.longitude})
+            .toList(),
+        'waypoints': path.waypoints
+            .map(
+              (w) => {
+                'lat': w.position.latitude,
+                'lon': w.position.longitude,
+                'point_type': w.pointType,
+                'name': w.name,
+                'sort_order': w.sortOrder,
+                'altitude_m': w.altitudeM,
+              },
+            )
+            .toList(),
+      }),
+      flush: true,
+    );
+  }
+
+  OfflineRoutePath? _pathFromJson(Map<String, dynamic> m, String fallbackId) {
+    final polyline = <LatLng>[];
+    final rawPoly = m['polyline'];
+    if (rawPoly is List) {
+      for (final p in rawPoly) {
+        if (p is List && p.length >= 2) {
+          polyline.add(LatLng((p[1] as num).toDouble(), (p[0] as num).toDouble()));
+        } else if (p is Map) {
+          final lat = (p['lat'] as num?)?.toDouble();
+          final lon = (p['lon'] as num?)?.toDouble();
+          if (lat != null && lon != null) polyline.add(LatLng(lat, lon));
+        }
+      }
     }
-    points.addAll(detail.waypoints.map((w) => w.position));
-    return points;
+
+    final waypoints = <RouteWaypoint>[];
+    final rawWps = m['waypoints'];
+    if (rawWps is List) {
+      for (final w in rawWps) {
+        if (w is! Map) continue;
+        final wm = Map<String, dynamic>.from(w);
+        final lat = (wm['lat'] as num?)?.toDouble();
+        final lon = (wm['lon'] as num?)?.toDouble();
+        if (lat == null || lon == null) continue;
+        waypoints.add(
+          RouteWaypoint(
+            position: LatLng(lat, lon),
+            pointType: wm['point_type']?.toString() ?? 'viewpoint',
+            name: wm['name']?.toString(),
+            sortOrder: (wm['sort_order'] as num?)?.toInt() ?? 0,
+            altitudeM: (wm['altitude_m'] as num?)?.toInt(),
+          ),
+        );
+      }
+    }
+
+    if (polyline.length < 2 && waypoints.length >= 2) {
+      polyline.addAll(waypoints.map((w) => w.position));
+    }
+    if (polyline.length < 2) return null;
+
+    return OfflineRoutePath(
+      routeId: m['route_id']?.toString() ?? fallbackId,
+      title: m['title']?.toString() ?? 'Офлайн-маршрут',
+      polyline: polyline,
+      waypoints: waypoints,
+    );
   }
 
   ({double minLat, double maxLat, double minLon, double maxLon}) _boundsForPoints(
@@ -374,11 +531,13 @@ class _MapMeta {
   final String title;
   final DateTime? downloadedAt;
   final int tileCount;
+  final int pathPointCount;
 
   _MapMeta({
     required this.routeId,
     required this.title,
     this.downloadedAt,
     this.tileCount = 0,
+    this.pathPointCount = 0,
   });
 }

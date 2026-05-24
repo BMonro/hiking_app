@@ -1,11 +1,19 @@
 // deploy: npx supabase functions deploy trip-actions
-// actions: apply | decide | cancel
+// actions: apply | decide | cancel | create | update | close | complete | leave
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { createServiceClient } from "../_shared/auth.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 
-type Action = "apply" | "decide" | "cancel";
+type Action =
+  | "apply"
+  | "decide"
+  | "cancel"
+  | "create"
+  | "update"
+  | "close"
+  | "complete"
+  | "leave";
 
 const fitnessUa: Record<string, string> = {
   beginner: "початківець",
@@ -18,6 +26,11 @@ function formatDates(trip: { start_date?: string; end_date?: string }): string {
   const e = trip.end_date ?? "";
   if (s && e && s !== e) return `${s} — ${e}`;
   return s || e || "";
+}
+
+function generateTripCode(): string {
+  const n = Date.now().toString();
+  return `TRIP-${n.slice(-8)}`;
 }
 
 Deno.serve(async (req) => {
@@ -44,32 +57,38 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
-  let body: {
-    action?: Action;
-    trip_id?: string;
-    applicant_id?: string;
-    approved?: boolean;
-  };
+  let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
     return jsonResponse({ error: "invalid_json" }, 400);
   }
 
-  const action = body.action;
-  const tripId = body.trip_id;
-  if (!action || !tripId) {
-    return jsonResponse({ error: "action_and_trip_id_required" }, 400);
+  const action = body.action as Action | undefined;
+  if (!action) {
+    return jsonResponse({ error: "action_required" }, 400);
+  }
+
+  const tripId = body.trip_id as string | undefined;
+
+  if (action !== "create" && !tripId) {
+    return jsonResponse({ error: "trip_id_required" }, 400);
   }
 
   try {
     const service = createServiceClient();
 
+    if (action === "create") {
+      return await handleCreate(supabase, user.id, body);
+    }
+    if (action === "update") {
+      return await handleUpdate(supabase, user.id, tripId!, body);
+    }
     if (action === "apply") {
-      return await handleApply(supabase, service, user.id, tripId);
+      return await handleApply(supabase, service, user.id, tripId!);
     }
     if (action === "decide") {
-      const applicantId = body.applicant_id;
+      const applicantId = body.applicant_id as string | undefined;
       if (!applicantId || body.approved === undefined) {
         return jsonResponse({ error: "applicant_id_and_approved_required" }, 400);
       }
@@ -77,13 +96,22 @@ Deno.serve(async (req) => {
         supabase,
         service,
         user.id,
-        tripId,
+        tripId!,
         applicantId,
         !!body.approved,
       );
     }
     if (action === "cancel") {
-      return await handleCancel(supabase, user.id, tripId);
+      return await handleCancel(supabase, user.id, tripId!);
+    }
+    if (action === "close") {
+      return await handleStatusChange(supabase, user.id, tripId!, "closed");
+    }
+    if (action === "complete") {
+      return await handleStatusChange(supabase, user.id, tripId!, "completed");
+    }
+    if (action === "leave") {
+      return await handleLeave(supabase, user.id, tripId!);
     }
     return jsonResponse({ error: "unknown_action" }, 400);
   } catch (e) {
@@ -101,6 +129,12 @@ Deno.serve(async (req) => {
     if (msg === "already_applied") {
       return jsonResponse({ error: "already_applied" }, 409);
     }
+    if (msg === "invalid_dates") {
+      return jsonResponse({ error: "invalid_dates" }, 400);
+    }
+    if (msg === "title_required") {
+      return jsonResponse({ error: "title_required" }, 400);
+    }
     return jsonResponse({ error: "trip_action_failed", message: msg }, 500);
   }
 });
@@ -114,6 +148,149 @@ async function insertNotification(
     console.error("notification insert failed:", error);
     throw error;
   }
+}
+
+async function handleCreate(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const title = String(body.title ?? "").trim();
+  if (!title) throw new Error("title_required");
+
+  const startDate = String(body.start_date ?? "");
+  const endDate = String(body.end_date ?? "");
+  if (!startDate || !endDate || startDate > endDate) {
+    throw new Error("invalid_dates");
+  }
+
+  const maxMembers = Number(body.max_members ?? 10);
+  if (!Number.isFinite(maxMembers) || maxMembers < 1) {
+    throw new Error("invalid_max_members");
+  }
+
+  const routeId = body.route_id as string | null | undefined;
+
+  const { data: inserted, error } = await supabase
+    .from("trips")
+    .insert({
+      title,
+      description: String(body.description ?? "").trim(),
+      meeting_point: String(body.meeting_point ?? "").trim(),
+      max_members: maxMembers,
+      start_date: startDate,
+      end_date: endDate,
+      route_id: routeId || null,
+      organizer_id: userId,
+      status: "open",
+      trip_code: generateTripCode(),
+    })
+    .select("id, trip_code")
+    .single();
+
+  if (error) throw error;
+
+  return jsonResponse({
+    ok: true,
+    trip_id: inserted.id,
+    trip_code: inserted.trip_code,
+    status: "open",
+  });
+}
+
+async function handleUpdate(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  tripId: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const { data: trip, error } = await supabase
+    .from("trips")
+    .select("organizer_id, status")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (error || !trip) throw new Error("trip_not_found");
+  if (trip.organizer_id !== userId) throw new Error("forbidden");
+  if (trip.status === "cancelled" || trip.status === "completed") {
+    throw new Error("trip_not_editable");
+  }
+
+  const startDate = String(body.start_date ?? "");
+  const endDate = String(body.end_date ?? "");
+  if (!startDate || !endDate || startDate > endDate) {
+    throw new Error("invalid_dates");
+  }
+
+  const payload = {
+    title: String(body.title ?? "").trim(),
+    description: String(body.description ?? "").trim(),
+    meeting_point: String(body.meeting_point ?? "").trim(),
+    max_members: Number(body.max_members ?? 10),
+    start_date: startDate,
+    end_date: endDate,
+    route_id: (body.route_id as string | null) || null,
+  };
+
+  if (!payload.title) throw new Error("title_required");
+
+  const { error: updErr } = await supabase
+    .from("trips")
+    .update(payload)
+    .eq("id", tripId);
+  if (updErr) throw updErr;
+
+  return jsonResponse({ ok: true, trip_id: tripId });
+}
+
+async function handleStatusChange(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  tripId: string,
+  status: string,
+): Promise<Response> {
+  const { data: trip, error } = await supabase
+    .from("trips")
+    .select("organizer_id")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (error || !trip) throw new Error("trip_not_found");
+  if (trip.organizer_id !== userId) throw new Error("forbidden");
+
+  const { error: updErr } = await supabase
+    .from("trips")
+    .update({ status })
+    .eq("id", tripId);
+  if (updErr) throw updErr;
+
+  return jsonResponse({ ok: true, status });
+}
+
+async function handleLeave(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  tripId: string,
+): Promise<Response> {
+  const { data: trip, error } = await supabase
+    .from("trips")
+    .select("organizer_id")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (error || !trip) throw new Error("trip_not_found");
+  if (trip.organizer_id === userId) {
+    throw new Error("organizer_cannot_leave");
+  }
+
+  const { error: delErr } = await supabase
+    .from("trip_participants")
+    .delete()
+    .eq("trip_id", tripId)
+    .eq("user_id", userId);
+  if (delErr) throw delErr;
+
+  return jsonResponse({ ok: true, status: "left" });
 }
 
 async function handleApply(

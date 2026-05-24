@@ -6,6 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/validation/form_validators.dart';
+import '../../../core/widgets/app_text_form_field.dart';
 import '../data/avatar_storage_service.dart';
 import 'profile_screen.dart';
 import 'widgets/profile_avatar.dart';
@@ -18,6 +21,7 @@ class EditProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
+  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
   final _bioController = TextEditingController();
@@ -147,6 +151,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   Future<void> _save() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _isSaving = true);
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
@@ -234,7 +239,27 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Редагування профілю'),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black87),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/profile');
+            }
+          },
+        ),
+        title: const Text(
+          'Редагування профілю',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -290,7 +315,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     ),
                   ],
                 ),
-                child: Column(
+                child: Form(
+                  key: _formKey,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
@@ -302,54 +330,69 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    TextField(
+                    AppTextFormField(
                       controller: _nameController,
+                      validator: FormValidators.fullName,
                       decoration: _inputDecoration(
                         'Ім\'я та прізвище',
                         Icons.person_outline,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
+                    AppTextFormField(
                       controller: _ageController,
                       keyboardType: TextInputType.number,
+                      validator: (v) => FormValidators.age(v, requiredField: true),
                       decoration: _inputDecoration(
                         'Вік',
                         Icons.calendar_today,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
+                    AppTextFormField(
                       controller: _bioController,
                       maxLines: 4,
+                      validator: FormValidators.bio,
                       decoration: _inputDecoration(
                         'Про себе',
                         Icons.description,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
+                    AppTextFormField(
                       controller: _experienceController,
                       keyboardType: TextInputType.number,
+                      validator: (v) => FormValidators.optionalNonNegativeInt(
+                        v,
+                        field: 'Кількість походів',
+                        max: 10000,
+                      ),
                       decoration: _inputDecoration(
                         'Кількість попередніх походів',
                         Icons.hiking_outlined,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
+                    AppTextFormField(
                       controller: _preferredDurationController,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
+                      validator: (v) => FormValidators.optionalDecimal(
+                        v,
+                        field: 'Тривалість',
+                        min: 0,
+                        max: 720,
+                      ),
                       decoration: _inputDecoration(
                         'Бажана тривалість (год)',
                         Icons.timelapse_outlined,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
+                    AppTextFormField(
                       controller: _healthConditionsController,
                       maxLines: 2,
+                      validator: FormValidators.healthConditions,
                       decoration: _inputDecoration(
                         'Стан здоровʼя / хвороби (через кому)',
                         Icons.health_and_safety_outlined,
@@ -434,6 +477,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       ),
                     ),
                   ],
+                ),
                 ),
               ),
 

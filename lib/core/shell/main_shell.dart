@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../widgets/in_app_notification_listener.dart';
 import '../../features/trips/presentation/trips_providers.dart';
 
 class MainShell extends ConsumerWidget {
@@ -12,11 +13,15 @@ class MainShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(tripsRealtimeSyncProvider);
 
-    return Scaffold(
+    return InAppNotificationListener(
+      child: Scaffold(
       body: child,
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: Colors.white,
+          border: Border(
+            top: BorderSide(color: Color(0xFFD8E0D8), width: 1),
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.06),
@@ -71,6 +76,7 @@ class MainShell extends ConsumerWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import '../logging/app_log.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,22 +23,59 @@ import '../../features/profile/presentation/my_routes_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/profile/presentation/statistics_screen.dart';
 import '../../features/profile/presentation/settings_screen.dart';
+import '../../features/profile/presentation/notifications_screen.dart';
 import '../shell/main_shell.dart';
 
+String? _profileCheckedUserId;
+bool _profilePhysicalComplete = false;
+
+void _resetProfileCheckCache() {
+  _profileCheckedUserId = null;
+  _profilePhysicalComplete = false;
+}
+
+/// Чи потрібен крок 2 реєстрації (вік, фото, інтереси) після OAuth / email.
 Future<bool> _needsPhysicalProfile(String userId) async {
-  final profile = await Supabase.instance.client
-      .from('profiles')
-      .select('age')
-      .eq('id', userId)
-      .maybeSingle();
-  return profile == null || profile['age'] == null;
+  if (_profileCheckedUserId == userId && _profilePhysicalComplete) {
+    return false;
+  }
+
+  final meta = Supabase.instance.client.auth.currentUser?.userMetadata;
+  if (meta?['onboarding_complete'] == true) {
+    _profileCheckedUserId = userId;
+    _profilePhysicalComplete = true;
+    return false;
+  }
+
+  try {
+    final profile = await Supabase.instance.client
+        .from('profiles')
+        .select('age')
+        .eq('id', userId)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 3));
+    final needs = profile == null || profile['age'] == null;
+    _profileCheckedUserId = userId;
+    _profilePhysicalComplete = !needs;
+    return needs;
+  } catch (_) {
+    if (_profileCheckedUserId == userId) {
+      return !_profilePhysicalComplete;
+    }
+    // Без даних з БД — показуємо онбординг (не пускаємо в /home як «вхід»).
+    return true;
+  }
 }
 
 /// Notifies [GoRouter] when Supabase auth session changes (e.g. OAuth deep link).
 class AuthSessionRefreshNotifier extends ChangeNotifier {
   AuthSessionRefreshNotifier() {
     _subscription =
-        Supabase.instance.client.auth.onAuthStateChange.listen((_) {
+        Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn ||
+          data.event == AuthChangeEvent.signedOut) {
+        _resetProfileCheckCache();
+      }
       notifyListeners();
     });
   }
@@ -76,7 +113,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         final needsPhysical = await _needsPhysicalProfile(userId);
 
         if (needsPhysical) {
-          if (isRegisterRoute) return null;
+          final onOAuthStep =
+              state.uri.queryParameters['oauth'] == '1';
+          if (isRegisterRoute && onOAuthStep) return null;
           return '/register?oauth=1';
         }
 
@@ -86,8 +125,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
         return null;
       } catch (e, st) {
-        if (kDebugMode) {
-          debugPrint('GoRouter redirect error: $e\n$st');
+        appLog('GoRouter redirect error', e, st);
+        if (Supabase.instance.client.auth.currentSession != null) {
+          return null;
         }
         return '/login';
       }
@@ -160,6 +200,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/navigation',
             builder: (context, state) => NavigationScreen(
               routeIdToFollow: state.uri.queryParameters['routeId'],
+              forceOfflineNavigation:
+                  state.uri.queryParameters['offline'] == 'true',
             ),
           ),
           GoRoute(
@@ -193,6 +235,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/settings',
             builder: (context, state) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: '/notifications',
+            builder: (context, state) => const NotificationsScreen(),
           ),
         ],
       ),

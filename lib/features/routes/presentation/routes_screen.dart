@@ -5,9 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
+import '../data/save_route_api.dart';
 import 'routes_provider.dart';
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/validation/form_validators.dart';
+import '../../../core/widgets/app_text_form_field.dart';
 import 'widgets/osm_route_point_name_field.dart';
 
 class RoutesScreen extends ConsumerStatefulWidget {
@@ -45,51 +49,44 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         title: const Text(
           'Маршрути',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Новий маршрут',
-            onPressed: () => _showAddRouteDialog(context),
-          ),
-        ],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Каталог маршрутів',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-                  ),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: () => _showAddRouteDialog(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
                 ),
-                ElevatedButton.icon(
-                  onPressed: () => _showAddRouteDialog(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                  ),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Додати'),
-                ),
-              ],
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Додати'),
+              ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
               controller: _searchController,
+              maxLength: 120,
+              buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+                  null,
               onChanged: (value) {
-                ref.read(searchQueryProvider.notifier).state = value;
+                final err = FormValidators.searchQuery(value);
+                if (err == null) {
+                  ref.read(searchQueryProvider.notifier).state = value;
+                }
               },
               decoration: InputDecoration(
                 hintText: 'Пошук за назвою маршруту',
@@ -239,6 +236,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
       text: ref.read(ascentMaxFilterProvider)?.toString() ?? '',
     );
     final diff = <String>[ref.read(difficultyFilterProvider)];
+    final filterFormKey = GlobalKey<FormState>();
 
     showModalBottomSheet(
       context: context,
@@ -257,7 +255,10 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
               bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             ),
             child: SingleChildScrollView(
-              child: Column(
+              child: Form(
+                key: filterFormKey,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -317,16 +318,18 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                         setModal(() => rt[0] = value ?? 'all'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: durationController,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
+                    validator: FormValidators.filterMaxDuration,
                     decoration: _inputDecoration('Макс. тривалість (год)'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: ascentController,
                     keyboardType: TextInputType.number,
+                    validator: FormValidators.filterMaxAscent,
                     decoration: _inputDecoration('Макс. перепад висот (м)'),
                   ),
                   const SizedBox(height: 20),
@@ -360,13 +363,20 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                             foregroundColor: Colors.white,
                           ),
                           onPressed: () {
-                            final durationValue = double.tryParse(
-                              durationController.text
-                                  .replaceAll(',', '.')
-                                  .trim(),
-                            );
-                            final ascentValue =
-                                int.tryParse(ascentController.text.trim());
+                            if (!(filterFormKey.currentState?.validate() ??
+                                false)) {
+                              return;
+                            }
+                            final durationText = durationController.text
+                                .replaceAll(',', '.')
+                                .trim();
+                            final ascentText = ascentController.text.trim();
+                            final durationValue = durationText.isEmpty
+                                ? null
+                                : double.tryParse(durationText);
+                            final ascentValue = ascentText.isEmpty
+                                ? null
+                                : int.tryParse(ascentText);
                             ref.read(difficultyFilterProvider.notifier).state =
                                 diff[0];
                             ref.read(routeTypeFilterProvider.notifier).state =
@@ -383,6 +393,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                     ],
                   ),
                 ],
+              ),
               ),
             ),
           );
@@ -564,8 +575,10 @@ bool _hasValidStartFinish(List<_RoutePointDraft> points) {
   );
   return start.lat != null &&
       start.lon != null &&
+      start.name.isNotEmpty &&
       finish.lat != null &&
-      finish.lon != null;
+      finish.lon != null &&
+      finish.name.isNotEmpty;
 }
 
 /// У БД не існує типу `waypoint` — проміжні точки зберігаємо як `viewpoint`.
@@ -577,6 +590,12 @@ List<Map<String, dynamic>> _toDbPoints(
   String routeId,
   List<_RoutePointDraft> points,
 ) {
+  return _toSaveRoutePoints(points).map((p) {
+    return {...p, 'route_id': routeId};
+  }).toList();
+}
+
+List<Map<String, dynamic>> _toSaveRoutePoints(List<_RoutePointDraft> points) {
   final result = <Map<String, dynamic>>[];
   var sort = 0;
   for (final p in points) {
@@ -585,7 +604,6 @@ List<Map<String, dynamic>> _toDbPoints(
     if (lat == null || lon == null) continue;
     final dbType = _pointTypeForDatabase(p.pointType);
     result.add({
-      'route_id': routeId,
       'name': p.name.isEmpty
           ? (p.pointType == 'start'
               ? 'Старт'
@@ -694,6 +712,8 @@ class _PointRow extends StatelessWidget {
         : point.pointType == 'finish'
             ? 'Фініш'
             : 'Точка'; // viewpoint та інші проміжні
+    final coordsRequired =
+        point.pointType == 'start' || point.pointType == 'finish';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -724,15 +744,20 @@ class _PointRow extends StatelessWidget {
           lonController: point.lonController,
           altController: point.altController,
           onCoordinatesApplied: onChanged,
+          nameRequired: coordsRequired,
         ),
         const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: TextFormField(
                 controller: point.latController,
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
+                validator: (v) => FormValidators.latitude(
+                  v,
+                  requiredField: coordsRequired,
+                ),
                 decoration: InputDecoration(
                   hintText: 'Lat',
                   border: OutlineInputBorder(
@@ -745,10 +770,14 @@ class _PointRow extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: TextFormField(
                 controller: point.lonController,
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
+                validator: (v) => FormValidators.longitude(
+                  v,
+                  requiredField: coordsRequired,
+                ),
                 decoration: InputDecoration(
                   hintText: 'Lon',
                   border: OutlineInputBorder(
@@ -762,9 +791,10 @@ class _PointRow extends StatelessWidget {
             const SizedBox(width: 8),
             SizedBox(
               width: 90,
-              child: TextField(
+              child: TextFormField(
                 controller: point.altController,
                 keyboardType: TextInputType.number,
+                validator: FormValidators.optionalAltitude,
                 decoration: InputDecoration(
                   hintText: 'Alt',
                   border: OutlineInputBorder(
@@ -798,6 +828,7 @@ class RouteEditorScreen extends ConsumerStatefulWidget {
 class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
   static const _distance = Distance();
 
+  final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
   final _distanceController = TextEditingController();
@@ -874,52 +905,74 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
   }
 
   Future<void> _save() async {
-    if (_titleController.text.trim().isEmpty) {
-      _snack('Введіть назву маршруту');
-      return;
-    }
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     if (!_hasValidStartFinish(_points)) {
-      _snack('Додайте старт і фініш з координатами');
+      _snack('Додайте старт і фініш: назву та координати');
       return;
     }
 
     setState(() => _saving = true);
     try {
-      final stats = _computeFromPoints(_points, _distance);
-      final repo = ref.read(routesRepositoryProvider);
+      final saveApi = SaveRouteApi();
+      final points = _toSaveRoutePoints(_points);
+      final title = _titleController.text.trim();
+      final description = _descController.text.trim();
 
-      if (_isEdit) {
-        final routeId = widget.route!.id;
-        await repo.updateRoute(routeId, {
-          'title': _titleController.text.trim(),
-          'route_type': _selectedRouteType,
-          'description': _descController.text.trim(),
-          'distance_km': stats.distanceKm,
-          'duration_h': stats.durationH,
-          'ascent_m': stats.ascentM,
-          'difficulty': _selectedDifficulty,
-        });
-        await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
-        ref.invalidate(routesProvider);
-        ref.invalidate(routeDetailProvider(routeId));
-      } else {
-        final authorId = Supabase.instance.client.auth.currentUser!.id;
-        final routeId = await repo.addRouteReturningId({
-          'title': _titleController.text.trim(),
-          'route_type': _selectedRouteType,
-          'description': _descController.text.trim(),
-          'distance_km': stats.distanceKm,
-          'duration_h': stats.durationH,
-          'ascent_m': stats.ascentM,
-          'difficulty': _selectedDifficulty,
-          'is_public': true,
-          'author_id': authorId,
-        });
-        await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
-        ref.invalidate(routesProvider);
-        ref.invalidate(routeDetailProvider(routeId));
+      String routeId;
+      try {
+        if (_isEdit) {
+          routeId = widget.route!.id;
+          await saveApi.updateRoute(
+            routeId: routeId,
+            title: title,
+            routeType: _selectedRouteType,
+            description: description,
+            difficulty: _selectedDifficulty,
+            points: points,
+          );
+        } else {
+          routeId = await saveApi.createRoute(
+            title: title,
+            routeType: _selectedRouteType,
+            description: description,
+            difficulty: _selectedDifficulty,
+            points: points,
+          );
+        }
+      } catch (_) {
+        final stats = _computeFromPoints(_points, _distance);
+        final repo = ref.read(routesRepositoryProvider);
+        if (_isEdit) {
+          routeId = widget.route!.id;
+          await repo.updateRoute(routeId, {
+            'title': title,
+            'route_type': _selectedRouteType,
+            'description': description,
+            'distance_km': stats.distanceKm,
+            'duration_h': stats.durationH,
+            'ascent_m': stats.ascentM,
+            'difficulty': _selectedDifficulty,
+          });
+          await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
+        } else {
+          final authorId = Supabase.instance.client.auth.currentUser!.id;
+          routeId = await repo.addRouteReturningId({
+            'title': title,
+            'route_type': _selectedRouteType,
+            'description': description,
+            'distance_km': stats.distanceKm,
+            'duration_h': stats.durationH,
+            'ascent_m': stats.ascentM,
+            'difficulty': _selectedDifficulty,
+            'is_public': true,
+            'author_id': authorId,
+          });
+          await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
+        }
       }
 
+      ref.invalidate(routesProvider);
+      ref.invalidate(routeDetailProvider(routeId));
       if (mounted) Navigator.pop(context);
     } catch (e) {
       _snack(_isEdit ? 'Помилка редагування: $e' : 'Помилка: $e');
@@ -939,7 +992,8 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         title: Text(_isEdit ? 'Редагувати маршрут' : 'Новий маршрут'),
       ),
       body: _loading
@@ -948,11 +1002,15 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
               ? const SizedBox.shrink()
               : SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                  child: Column(
+                  child: Form(
+                    key: _formKey,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                    child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      TextField(
+                      AppTextFormField(
                         controller: _titleController,
+                        validator: FormValidators.title,
                         decoration: _routeEditorDecoration('Назва маршруту *'),
                       ),
                       const SizedBox(height: 16),
@@ -987,9 +1045,11 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
                         }).toList(),
                       ),
                       const SizedBox(height: 16),
-                      TextField(
+                      AppTextFormField(
                         controller: _descController,
                         maxLines: 3,
+                        validator: (v) =>
+                            FormValidators.description(v, requiredField: false),
                         decoration: _routeEditorDecoration('Опис'),
                       ),
                       const SizedBox(height: 16),
@@ -1079,6 +1139,7 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
                               ),
                       ),
                     ],
+                  ),
                   ),
                 ),
     );

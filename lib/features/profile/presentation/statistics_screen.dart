@@ -1,10 +1,27 @@
 import 'package:fl_chart/fl_chart.dart';
+
+import '../../../core/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Журнал за рік (для підсумків, графіків і рекордів).
+/// Агрегат за весь час (VIEW profile_stats).
+final profileStatsAllTimeProvider = FutureProvider<Map<String, dynamic>?>((ref) async {
+  final client = Supabase.instance.client;
+  final userId = client.auth.currentUser?.id;
+  if (userId == null) return null;
+
+  final row = await client
+      .from('profile_stats')
+      .select('total_hikes, total_distance_km, total_ascent_m')
+      .eq('user_id', userId)
+      .maybeSingle();
+  if (row == null) return null;
+  return Map<String, dynamic>.from(row as Map);
+});
+
+/// Журнал за рік (графіки, рекорди за місяць).
 final journalEntriesForYearProvider =
     FutureProvider.family<List<Map<String, dynamic>>, int>((ref, year) async {
   final client = Supabase.instance.client;
@@ -14,7 +31,7 @@ final journalEntriesForYearProvider =
   final data = await client
       .from('journal_entries')
       .select(
-        'id, date, title, actual_distance_km, actual_duration_h, actual_ascent_m, routes(title)',
+        'id, date, title, actual_distance_km, actual_duration_h, actual_ascent_m',
       )
       .eq('user_id', userId)
       .gte('date', '$year-01-01')
@@ -95,14 +112,25 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
     });
   }
 
+  Future<void> _refreshStats() async {
+    ref.invalidate(profileStatsAllTimeProvider);
+    ref.invalidate(journalEntriesForYearProvider(_year));
+    await Future.wait([
+      ref.read(profileStatsAllTimeProvider.future),
+      ref.read(journalEntriesForYearProvider(_year).future),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(journalEntriesForYearProvider(_year));
+    final allTimeAsync = ref.watch(profileStatsAllTimeProvider);
 
     return Scaffold(
       backgroundColor: _StatsTheme.bg,
       appBar: AppBar(
-        backgroundColor: _StatsTheme.bg,
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black87),
@@ -174,7 +202,20 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
               error: (e, _) => Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text('Не вдалося завантажити дані: $e'),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Не вдалося завантажити журнал: $e',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: _refreshStats,
+                        child: const Text('Спробувати знову'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               data: (entries) {
@@ -182,33 +223,75 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                 final monthEntries =
                     _entriesForMonth(entries, _year, _month);
                 final monthStats = _computeYearStats(monthEntries);
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _SummaryCards(stats: monthStats),
-                      const SizedBox(height: 24),
-                      _SectionTitle(title: 'Активність за рік'),
-                      const SizedBox(height: 12),
-                      _YearlyActivityChart(
-                        year: _year,
-                        stats: yearStats,
-                        selectedMonth: _month,
-                      ),
-                      const SizedBox(height: 24),
-                      _SectionTitle(title: 'Висотний профіль'),
-                      const SizedBox(height: 12),
-                      _ElevationChart(
-                        stats: monthStats,
-                        emptyHint:
-                            'Додайте записи в журнал за ${_monthNames[_month - 1].toLowerCase()} $_year',
-                      ),
-                      const SizedBox(height: 24),
-                      _SectionTitle(title: 'Рекорди'),
-                      const SizedBox(height: 12),
-                      _RecordsCard(stats: monthStats),
-                    ],
+                final monthLabel =
+                    '${_monthNames[_month - 1].toLowerCase()} $_year';
+
+                return RefreshIndicator(
+                  onRefresh: _refreshStats,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        allTimeAsync.when(
+                          loading: () => const SizedBox.shrink(),
+                          error: (_, __) => const SizedBox.shrink(),
+                          data: (allTime) {
+                            if (allTime == null) return const SizedBox.shrink();
+                            final hikesRaw = allTime['total_hikes'];
+                            final hikesCount = hikesRaw is int
+                                ? hikesRaw
+                                : int.tryParse('$hikesRaw') ?? 0;
+                            final km = _asDouble(allTime['total_distance_km']);
+                            final asc = _asDouble(allTime['total_ascent_m']);
+                            if (hikesCount == 0 &&
+                                (km ?? 0) <= 0 &&
+                                (asc ?? 0) <= 0) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: _AllTimeBanner(
+                                hikes: hikesCount,
+                                km: km ?? 0,
+                                ascentM: asc ?? 0,
+                              ),
+                            );
+                          },
+                        ),
+                        _SectionTitle(title: 'Підсумок за $_year рік'),
+                        const SizedBox(height: 12),
+                        _SummaryCards(stats: yearStats),
+                        if (yearStats.hikes == 0) ...[
+                          const SizedBox(height: 12),
+                          _EmptyHint(
+                            text:
+                                'У журналі немає записів за $_year рік. Додайте похід у розділі «Журнал походів» або завершіть навігацію маршруту.',
+                          ),
+                        ],
+                        const SizedBox(height: 24),
+                        _SectionTitle(title: 'Активність за рік'),
+                        const SizedBox(height: 12),
+                        _YearlyActivityChart(
+                          year: _year,
+                          stats: yearStats,
+                          selectedMonth: _month,
+                        ),
+                        const SizedBox(height: 24),
+                        _SectionTitle(title: 'За $monthLabel'),
+                        const SizedBox(height: 12),
+                        _ElevationChart(
+                          stats: monthStats,
+                          emptyHint:
+                              'Немає записів за $monthLabel',
+                        ),
+                        const SizedBox(height: 24),
+                        _SectionTitle(title: 'Рекорди за $monthLabel'),
+                        const SizedBox(height: 12),
+                        _RecordsCard(stats: monthStats),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -286,11 +369,6 @@ List<Map<String, dynamic>> _entriesForMonth(
 }
 
 String _routeLabel(Map<String, dynamic> e) {
-  final routes = e['routes'];
-  if (routes is Map) {
-    final title = routes['title'] as String?;
-    if (title != null && title.isNotEmpty) return title;
-  }
   final t = e['title'] as String?;
   if (t != null && t.isNotEmpty) return t;
   return '—';
@@ -504,6 +582,61 @@ class _SectionTitle extends StatelessWidget {
         fontSize: 17,
         fontWeight: FontWeight.w700,
         color: Colors.black87,
+      ),
+    );
+  }
+}
+
+class _AllTimeBanner extends StatelessWidget {
+  const _AllTimeBanner({
+    required this.hikes,
+    required this.km,
+    required this.ascentM,
+  });
+
+  final int hikes;
+  final double km;
+  final double ascentM;
+
+  @override
+  Widget build(BuildContext context) {
+    final hikesStr = hikes.toString();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _StatsTheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _StatsTheme.mint),
+      ),
+      child: Text(
+        'Усього в журналі: $hikesStr походів · ${_formatKm(km)} км · ${ascentM.round()} м набору',
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  const _EmptyHint({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _StatsTheme.cardBorder),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.4),
       ),
     );
   }

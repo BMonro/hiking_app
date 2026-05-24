@@ -1,21 +1,84 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_map/flutter_map.dart';
 
+import '../../../core/api/backend_api.dart';
 import '../../../core/config/overpass_config.dart';
 import '../domain/map_poi.dart';
 
-/// Завантаження POI з OpenStreetMap через публічний Overpass API.
-/// Ключ не потрібен; дотримуйтесь обмежень навантаження (див. коментар у кінці файлу).
+/// POI з Overpass через Edge Function `poi-nearby` (локальний fallback).
 class OverpassPoiRepository {
-  OverpassPoiRepository({Dio? dio}) : _dio = dio ?? Dio();
+  OverpassPoiRepository({Dio? dio, BackendApi? api})
+      : _dio = dio ?? Dio(),
+        _api = api ?? BackendApi();
 
   final Dio _dio;
+  final BackendApi _api;
 
-  /// `null` — область екрана завелика (треба наблизити карту).
   Future<List<MapPoi>?> fetchPoisInBounds(
     LatLngBounds bounds, {
     String endpoint = OverpassConfig.interpreterUrl,
   }) async {
+    final sw = bounds.southWest;
+    final ne = bounds.northEast;
+
+    try {
+      final data = await _api.invoke(
+        'poi-nearby',
+        body: {
+          'south': sw.latitude,
+          'west': sw.longitude,
+          'north': ne.latitude,
+          'east': ne.longitude,
+        },
+        timeout: const Duration(seconds: 55),
+      );
+      if (data['zoom_too_low'] == true) return null;
+      return _parsePois(data['pois']);
+    } catch (_) {
+      return _fetchPoisLocal(bounds, endpoint);
+    }
+  }
+
+  List<MapPoi> _parsePois(dynamic raw) {
+    if (raw is! List) return [];
+    final list = <MapPoi>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final m = Map<String, dynamic>.from(item);
+      final kindStr = m['kind']?.toString() ?? 'other';
+      list.add(
+        MapPoi(
+          lat: (m['lat'] as num).toDouble(),
+          lon: (m['lon'] as num).toDouble(),
+          kind: _kindFromString(kindStr),
+          name: m['name']?.toString(),
+          elevationM: (m['elevation_m'] as num?)?.toInt(),
+        ),
+      );
+    }
+    return list;
+  }
+
+  MapPoiKind _kindFromString(String s) {
+    return switch (s) {
+      'peak' => MapPoiKind.peak,
+      'water' => MapPoiKind.water,
+      'shelter' => MapPoiKind.shelter,
+      'hut' => MapPoiKind.hut,
+      'viewpoint' => MapPoiKind.viewpoint,
+      'picnicSite' => MapPoiKind.picnicSite,
+      'campSite' => MapPoiKind.campSite,
+      'attraction' => MapPoiKind.attraction,
+      'historic' => MapPoiKind.historic,
+      'information' => MapPoiKind.information,
+      _ => MapPoiKind.other,
+    };
+  }
+
+  Future<List<MapPoi>?> _fetchPoisLocal(
+    LatLngBounds bounds,
+    String endpoint,
+  ) async {
     final sw = bounds.southWest;
     final ne = bounds.northEast;
     final south = sw.latitude;
@@ -25,58 +88,15 @@ class OverpassPoiRepository {
 
     final latSpan = (north - south).abs();
     final lonSpan = (east - west).abs();
-    // Занадто малий bbox був занадто жорсткий: на планшеті чи при зумі 11–12
-    // видима область часто > 0.22° → запити блокувались без потреби.
-    // Обмежуємо лише дуже великі запити (навантаження на Overpass).
-    if (latSpan > 0.65 || lonSpan > 1.0) {
-      return null;
-    }
+    if (latSpan > 0.65 || lonSpan > 1.0) return null;
 
     final query = '''
 [out:json][timeout:55];
 (
   node["tourism"="alpine_hut"]($south,$west,$north,$east);
-  node["tourism"="wilderness_hut"]($south,$west,$north,$east);
-  node["tourism"="attraction"]($south,$west,$north,$east);
-  node["tourism"="museum"]($south,$west,$north,$east);
-  node["tourism"="gallery"]($south,$west,$north,$east);
-  node["tourism"="artwork"]($south,$west,$north,$east);
-  node["tourism"="zoo"]($south,$west,$north,$east);
-  node["tourism"="theme_park"]($south,$west,$north,$east);
-  node["tourism"="viewpoint"]($south,$west,$north,$east);
-  node["tourism"="information"]($south,$west,$north,$east);
-  node["tourism"="picnic_site"]($south,$west,$north,$east);
-  node["tourism"="camp_site"]($south,$west,$north,$east);
-  node["tourism"="caravan_site"]($south,$west,$north,$east);
-  node["amenity"="shelter"]($south,$west,$north,$east);
-  node["amenity"="drinking_water"]($south,$west,$north,$east);
-  node["amenity"="fountain"]($south,$west,$north,$east);
   node["natural"="peak"]($south,$west,$north,$east);
-  node["natural"="spring"]($south,$west,$north,$east);
-  node["natural"="hot_spring"]($south,$west,$north,$east);
-  node["man_made"="water_well"]($south,$west,$north,$east);
-  node["historic"="castle"]($south,$west,$north,$east);
-  node["historic"="ruins"]($south,$west,$north,$east);
-  node["historic"="archaeological_site"]($south,$west,$north,$east);
-  node["historic"="monument"]($south,$west,$north,$east);
-  node["historic"="memorial"]($south,$west,$north,$east);
-  node["historic"="wayside_shrine"]($south,$west,$north,$east);
-  node["historic"="battlefield"]($south,$west,$north,$east);
-  node["historic"="fort"]($south,$west,$north,$east);
-  node["historic"="city_gate"]($south,$west,$north,$east);
-  node["historic"="manor"]($south,$west,$north,$east);
-  way["tourism"="alpine_hut"]($south,$west,$north,$east);
-  way["tourism"="wilderness_hut"]($south,$west,$north,$east);
-  way["amenity"="shelter"]($south,$west,$north,$east);
-  way["natural"="peak"]($south,$west,$north,$east);
-  way["tourism"="museum"]($south,$west,$north,$east);
-  way["tourism"="picnic_site"]($south,$west,$north,$east);
-  way["tourism"="camp_site"]($south,$west,$north,$east);
-  way["tourism"="caravan_site"]($south,$west,$north,$east);
-  way["historic"="castle"]($south,$west,$north,$east);
-  way["historic"="ruins"]($south,$west,$north,$east);
-  way["historic"="archaeological_site"]($south,$west,$north,$east);
-  way["historic"="monument"]($south,$west,$north,$east);
+  node["amenity"="shelter"]($south,$west,$north,$east);
+  node["tourism"="viewpoint"]($south,$west,$north,$east);
 );
 out center;
 ''';
@@ -95,7 +115,6 @@ out center;
 
     final data = response.data;
     if (data == null) return [];
-
     final elements = data['elements'];
     if (elements is! List) return [];
 
@@ -103,7 +122,6 @@ out center;
     for (final raw in elements) {
       if (raw is! Map) continue;
       final e = raw.cast<String, dynamic>();
-
       double? lat;
       double? lon;
       final type = e['type']?.toString();
@@ -118,7 +136,6 @@ out center;
         }
       }
       if (lat == null || lon == null) continue;
-
       final tagsRaw = e['tags'];
       final tags = <String, String>{};
       if (tagsRaw is Map) {
@@ -126,15 +143,12 @@ out center;
           tags[entry.key.toString()] = entry.value?.toString() ?? '';
         }
       }
-
-      final name = tags['name']?.trim();
-      final kind = MapPoi.kindFromTags(tags);
       list.add(
         MapPoi(
           lat: lat,
           lon: lon,
-          kind: kind,
-          name: name,
+          kind: MapPoi.kindFromTags(tags),
+          name: tags['name']?.trim(),
           elevationM: MapPoi.elevationMFromTags(tags),
         ),
       );

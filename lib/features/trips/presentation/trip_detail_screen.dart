@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../profile/presentation/widgets/tappable_member_header.dart';
 import 'trips_providers.dart';
 
 /// Повна інформація про спільний похід (для перегляду будь-яким користувачем).
@@ -21,15 +23,31 @@ class TripDetailScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),
-        title: const Text(
-          'Деталі походу',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        title: tripAsync.when(
+          loading: () => const Text(
+            'Похід',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          error: (_, __) => const Text(
+            'Похід',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          data: (trip) => Text(
+            trip?['title']?.toString() ?? 'Похід',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ),
       body: tripAsync.when(
@@ -55,7 +73,7 @@ class TripDetailScreen extends ConsumerWidget {
   }
 }
 
-class _TripDetailBody extends StatelessWidget {
+class _TripDetailBody extends ConsumerWidget {
   const _TripDetailBody({required this.trip});
 
   final Map<String, dynamic> trip;
@@ -154,7 +172,7 @@ class _TripDetailBody extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final route = trip['routes'] as Map<String, dynamic>?;
     final routeId = route?['id']?.toString() ?? trip['route_id']?.toString();
     final title = trip['title']?.toString() ?? 'Похід';
@@ -164,21 +182,14 @@ class _TripDetailBody extends StatelessWidget {
     final approved = trip['_approved_count'] ?? 0;
     final pending = trip['_pending_count'] ?? 0;
     final orgName = trip['_organizer_name']?.toString() ?? '—';
+    final orgId = trip['organizer_id']?.toString();
+    final orgAvatar = trip['_organizer_avatar_url'] as String?;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
           Text(
             _statusUa(trip['status'] as String?),
             style: TextStyle(
@@ -193,7 +204,39 @@ class _TripDetailBody extends StatelessWidget {
               _dateLine(trip['start_date'], trip['end_date']),
               icon: Icons.calendar_today_outlined,
             ),
-            _row('Організатор', orgName, icon: Icons.person_outline),
+            if (orgId != null && orgId.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(Icons.person_outline, size: 18, color: Colors.grey[600]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        'Організатор',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: TappableMemberHeader(
+                        userId: orgId,
+                        displayName: orgName,
+                        avatarUrl: orgAvatar,
+                        avatarRadius: 20,
+                        nameStyle: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              _row('Організатор', orgName, icon: Icons.person_outline),
             _row(
               'Учасники',
               '$approved/${maxM ?? '—'} схвалено${pending > 0 ? ' · очікує заявок: $pending' : ''}',
@@ -264,6 +307,28 @@ class _TripDetailBody extends StatelessWidget {
                 ),
               ],
             ]),
+          if (trip['_can_chat'] == true) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  final id = trip['id']?.toString();
+                  if (id == null) return;
+                  context.push(
+                    '/trips/chat/$id?title=${Uri.encodeComponent(title)}',
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF2E7D32),
+                  side: const BorderSide(color: Color(0xFF2E7D32)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Чат групи'),
+              ),
+            ),
+          ],
         ],
       ),
     );

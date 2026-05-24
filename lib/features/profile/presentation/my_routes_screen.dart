@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../navigation/domain/offline_map_package.dart';
 import '../../routes/domain/route_model.dart';
 import '../../routes/presentation/offline_route_provider.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../routes/presentation/routes_provider.dart';
 
 class MyRoutesScreen extends ConsumerStatefulWidget {
@@ -47,7 +48,8 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: const Text(
           'Мої маршрути',
@@ -123,7 +125,7 @@ class _OfflineRoutesTab extends ConsumerWidget {
             icon: Icons.offline_pin,
             title: 'Немає завантажених карт',
             subtitle:
-                'На екрані маршруту натисніть «Завантажити карту офлайн», щоб зберегти тайли на пристрій.',
+                'На екрані маршруту натисніть «Завантажити карту офлайн» — збережуться карта та лінія шляху.',
           );
         }
 
@@ -134,7 +136,10 @@ class _OfflineRoutesTab extends ConsumerWidget {
             final mapPkg = maps[index];
             return _OfflineMapCard(
               mapPkg: mapPkg,
-              onOpen: () => context.push('/routes/detail/${mapPkg.routeId}'),
+              onOpen: () =>
+                  context.push(
+                    '/navigation?routeId=${mapPkg.routeId}&offline=true',
+                  ),
               onDelete: () => _deleteOfflineMap(context, ref, mapPkg.routeId),
             );
           },
@@ -345,11 +350,18 @@ class _OfflineMapCard extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              if (mapPkg.tileCount > 0)
+              if (mapPkg.pathPointCount > 0)
                 Text(
-                  'Тайлів: ${mapPkg.tileCount}',
+                  'Точок шляху: ${mapPkg.pathPointCount}',
                   style: TextStyle(color: Colors.grey[600], fontSize: 12),
                 ),
+              if (mapPkg.tileCount > 0) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Тайлів карти: ${mapPkg.tileCount}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              ],
               const SizedBox(height: 4),
               sizeAsync.when(
                 loading: () => Text(
@@ -368,7 +380,7 @@ class _OfflineMapCard extends ConsumerWidget {
                   Expanded(
                     child: OutlinedButton(
                       onPressed: onOpen,
-                      child: const Text('Відкрити'),
+                      child: const Text('Навігація'),
                     ),
                   ),
                   const SizedBox(width: 10),

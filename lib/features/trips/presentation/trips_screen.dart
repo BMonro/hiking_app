@@ -4,6 +4,11 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../routes/domain/route_model.dart';
+import '../../profile/data/public_profile_repository.dart';
+import '../../profile/presentation/widgets/tappable_member_header.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/validation/form_validators.dart';
+import '../../../core/widgets/app_text_form_field.dart';
 import '../data/trips_api.dart';
 import 'trips_providers.dart';
 
@@ -16,35 +21,12 @@ String _fitnessLevelUa(String? v) {
   };
 }
 
-String _profileDisplayName(Map<String, dynamic>? prof) {
-  if (prof == null) return 'Учасник';
-  final n = (prof['full_name'] as String?)?.trim();
-  return n != null && n.isNotEmpty ? n : 'Учасник';
-}
-
 class GroupHikesScreen extends ConsumerWidget {
   const GroupHikesScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(tripsRealtimeSyncProvider);
-
-    ref.listen<Map<String, dynamic>?>(tripInAppNotificationProvider, (prev, next) {
-      if (next == null || !context.mounted) return;
-      final title = next['title']?.toString() ?? 'Сповіщення';
-      final body = next['body']?.toString();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(body != null && body.isNotEmpty ? '$title\n$body' : title),
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'OK',
-            onPressed: () {},
-          ),
-        ),
-      );
-      ref.read(tripInAppNotificationProvider.notifier).state = null;
-    });
 
     final tripsAsync = ref.watch(groupHikesProvider);
     final filter = ref.watch(groupHikeFilterProvider);
@@ -54,7 +36,8 @@ class GroupHikesScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5F2),
+        backgroundColor: AppTheme.toolbarBackground,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         title: const Text(
@@ -66,31 +49,30 @@ class GroupHikesScreen extends ConsumerWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Спільні походи',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-                  ),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: () => _showUpsertTripDialog(context, ref),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
                 ),
-                ElevatedButton.icon(
-                  onPressed: () => _showUpsertTripDialog(context, ref),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                  ),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Створити похід'),
-                ),
-              ],
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Створити похід'),
+              ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
-              onChanged: (value) =>
-                  ref.read(groupHikeSearchProvider.notifier).state = value,
+              maxLength: 120,
+              buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+                  null,
+              onChanged: (value) {
+                if (FormValidators.searchQuery(value) == null) {
+                  ref.read(groupHikeSearchProvider.notifier).state = value;
+                }
+              },
               decoration: InputDecoration(
                 hintText: 'Пошук за назвою, ID або кодом',
                 prefixIcon: const Icon(Icons.search),
@@ -250,6 +232,8 @@ class GroupHikesScreen extends ConsumerWidget {
 
     if (!context.mounted) return;
 
+    final formKey = GlobalKey<FormState>();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -282,7 +266,10 @@ class GroupHikesScreen extends ConsumerWidget {
               bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             ),
             child: SingleChildScrollView(
-              child: Column(
+              child: Form(
+                key: formKey,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -293,13 +280,18 @@ class GroupHikesScreen extends ConsumerWidget {
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
                     key: ValueKey(selectedRouteId ?? 'route'),
+                    isExpanded: true,
                     initialValue: selectedRouteId,
                     decoration: _inputDecoration('Маршрут *'),
                     items: routeList
                         .map(
                           (route) => DropdownMenuItem<String>(
                             value: route['id'].toString(),
-                            child: Text(route['title']?.toString() ?? 'Маршрут'),
+                            child: Text(
+                              route['title']?.toString() ?? 'Маршрут',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
                           ),
                         )
                         .toList(),
@@ -328,25 +320,30 @@ class GroupHikesScreen extends ConsumerWidget {
                       ),
                     ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: titleController,
+                    validator: FormValidators.title,
                     decoration: _inputDecoration('Назва походу *'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: descController,
                     maxLines: 3,
+                    validator: (v) =>
+                        FormValidators.description(v, requiredField: true),
                     decoration: _inputDecoration('Опис *'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: meetingController,
+                    validator: FormValidators.meetingPoint,
                     decoration: _inputDecoration('Місце відправлення / збору *'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppTextFormField(
                     controller: maxMembersController,
                     keyboardType: TextInputType.number,
+                    validator: FormValidators.groupMaxMembers,
                     decoration: _inputDecoration('Кількість осіб *'),
                   ),
                   const SizedBox(height: 12),
@@ -403,21 +400,18 @@ class GroupHikesScreen extends ConsumerWidget {
                     ),
                     onPressed: () async {
                       final errors = <String>[];
-                      final maxMembers = int.tryParse(maxMembersController.text.trim());
-                      if (selectedRouteId == null) errors.add('Оберіть маршрут');
-                      if (titleController.text.trim().isEmpty) errors.add('Введіть назву');
-                      if (descController.text.trim().isEmpty) errors.add('Додайте опис');
-                      if (meetingController.text.trim().isEmpty) {
-                        errors.add('Вкажіть місце збору');
+                      if (!(formKey.currentState?.validate() ?? false)) {
+                        return;
                       }
+                      final maxMembers =
+                          int.parse(maxMembersController.text.trim());
+                      if (selectedRouteId == null) errors.add('Оберіть маршрут');
                       if (startDate == null || endDate == null) {
                         errors.add('Вкажіть дати походу');
                       } else if (endDate!.isBefore(startDate!)) {
                         errors.add('Дата завершення не може бути раніше початку');
                       }
-                      if (maxMembers == null || maxMembers < 2) {
-                        errors.add('Кількість осіб має бути не менше 2');
-                      }
+                      final members = maxMembers;
 
                       if (errors.isNotEmpty) {
                         if (!context.mounted) return;
@@ -451,40 +445,42 @@ class GroupHikesScreen extends ConsumerWidget {
                       }
 
                       try {
-                        final userId = Supabase.instance.client.auth.currentUser!.id;
-                        final payload = <String, dynamic>{
-                          'title': titleController.text.trim(),
-                          'description': descController.text.trim(),
-                          'meeting_point': meetingController.text.trim(),
-                          'max_members': maxMembers,
-                          'start_date': startDate!.toIso8601String().split('T')[0],
-                          'end_date': endDate!.toIso8601String().split('T')[0],
-                          'route_id': selectedRouteId,
-                        };
+                        final api = TripsApi();
+                        final start =
+                            startDate!.toIso8601String().split('T')[0];
+                        final end = endDate!.toIso8601String().split('T')[0];
 
                         if (isEditing) {
-                          await Supabase.instance.client
-                              .from('trips')
-                              .update(payload)
-                              .eq('id', editingTrip['id']);
+                          await api.updateTrip(
+                            tripId: editingTrip['id'].toString(),
+                            title: titleController.text.trim(),
+                            description: descController.text.trim(),
+                            meetingPoint: meetingController.text.trim(),
+                            maxMembers: members,
+                            startDate: start,
+                            endDate: end,
+                            routeId: selectedRouteId,
+                          );
                         } else {
-                          final code = 'TRIP-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
-                          await Supabase.instance.client
-                              .from('trips')
-                              .insert({
-                                ...payload,
-                                'organizer_id': userId,
-                                'status': 'open',
-                                'trip_code': code,
-                              })
-                              .select('id')
-                              .single();
-
-                          // Організатор як approved — тригер trip_organizer_participant (SQL).
+                          await api.createTrip(
+                            title: titleController.text.trim(),
+                            description: descController.text.trim(),
+                            meetingPoint: meetingController.text.trim(),
+                            maxMembers: members,
+                            startDate: start,
+                            endDate: end,
+                            routeId: selectedRouteId,
+                          );
                         }
 
                         ref.invalidate(groupHikesProvider);
                         if (context.mounted) Navigator.pop(context);
+                      } on TripsApiException catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(e.message)),
+                          );
+                        }
                       } catch (e) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -496,6 +492,7 @@ class GroupHikesScreen extends ConsumerWidget {
                     child: Text(isEditing ? 'Зберегти зміни' : 'Опублікувати'),
                   ),
                 ],
+              ),
               ),
             ),
           );
@@ -995,8 +992,10 @@ class _ManageTripRequestsSheet extends ConsumerWidget {
           );
         }
 
-        return FutureBuilder<Map<String, Map<String, dynamic>>>(
-          future: _loadProfiles(pendingList),
+        return FutureBuilder<Map<String, PublicProfile>>(
+          future: ref.read(publicProfileRepositoryProvider).fetchByIds(
+                pendingList.map((p) => p['user_id']?.toString() ?? ''),
+              ),
           builder: (context, profSnap) {
             final profileById = profSnap.data ?? {};
             return ListView.builder(
@@ -1007,41 +1006,65 @@ class _ManageTripRequestsSheet extends ConsumerWidget {
                 final request = pendingList[index];
                 final applicantId = request['user_id'].toString();
                 final prof = profileById[applicantId];
-                final displayName = _profileDisplayName(prof);
-                final age = prof?['age'];
-                final fit = _fitnessLevelUa(prof?['fitness_level'] as String?);
-                final bio = (prof?['bio'] as String?)?.trim() ?? '';
+                final displayName = prof?.displayName ?? 'Учасник';
+                final age = prof?.age;
+                final fit = _fitnessLevelUa(prof?.fitnessLevel);
+                final bio = prof?.bio ?? '';
                 return Card(
-                  child: ListTile(
-                    isThreeLine: bio.isNotEmpty,
-                    title: Text(
-                      displayName,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Column(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          [
-                            if (age != null) 'Вік: $age',
-                            'Підготовка: $fit',
-                          ].join(' · '),
-                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                        ),
-                        if (bio.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            bio,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (prof != null)
+                                TappableMemberHeader.fromProfile(
+                                  prof,
+                                  avatarRadius: 22,
+                                  nameStyle: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                  ),
+                                )
+                              else
+                                TappableMemberHeader(
+                                  userId: applicantId,
+                                  displayName: displayName,
+                                  avatarRadius: 22,
+                                  nameStyle: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+                              Text(
+                                [
+                                  if (age != null) 'Вік: $age',
+                                  'Підготовка: $fit',
+                                ].join(' · '),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                              if (bio.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  bio,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
-                        ],
-                      ],
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+                        ),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.red),
                           onPressed: () => _TripCard._resolveRequestStatic(
@@ -1076,25 +1099,6 @@ class _ManageTripRequestsSheet extends ConsumerWidget {
     );
   }
 
-  Future<Map<String, Map<String, dynamic>>> _loadProfiles(
-    List<Map<String, dynamic>> pendingList,
-  ) async {
-    final applicantIds = pendingList
-        .map((p) => p['user_id']?.toString())
-        .whereType<String>()
-        .toList();
-    if (applicantIds.isEmpty) return {};
-    final profs = await Supabase.instance.client
-        .from('profiles')
-        .select('id, full_name, age, fitness_level, bio')
-        .inFilter('id', applicantIds);
-    final profileById = <String, Map<String, dynamic>>{};
-    for (final p in List<Map<String, dynamic>>.from(profs)) {
-      final id = p['id']?.toString();
-      if (id != null) profileById[id] = p;
-    }
-    return profileById;
-  }
 }
 
 extension _FirstWhereOrNullExtension<T> on Iterable<T> {

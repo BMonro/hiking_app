@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-/// Аватар профілю: локальний файл, URL з Storage або ініціали.
 class ProfileAvatar extends StatelessWidget {
   final double radius;
   final String? imageUrl;

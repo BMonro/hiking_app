@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy geosearch
-// body: { query: string, mode: route_full|weather_full|weather_places|weather_peaks|route_places|route_peaks }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";

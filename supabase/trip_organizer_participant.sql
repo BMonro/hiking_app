@@ -1,5 +1,4 @@
--- Організатор автоматично стає approved-учасником нового походу.
--- Виконати в Supabase → SQL Editor (можна прибрати upsert з Flutter після цього).
+
 
 CREATE OR REPLACE FUNCTION public.trg_trip_add_organizer_participant()
 RETURNS TRIGGER

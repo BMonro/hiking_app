@@ -1,4 +1,4 @@
-/** Геопошук: Photon + Nominatim + Overpass (вершини). */
+
 
 export type PlaceResult = {
   display_name: string;

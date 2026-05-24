@@ -14,8 +14,7 @@ class RoutesRepository {
     double? durationMax,
     int? ascentMax,
   }) async {
-    // Усі фільтри мають йти до `.order()` — інакше Postgrest повертає
-    // PostgrestTransformBuilder без методів `.ilike()` / `.eq()` тощо.
+
     dynamic query = _client.from('routes').select().eq('is_public', true);
 
     if (search != null && search.isNotEmpty) {
@@ -49,7 +48,6 @@ class RoutesRepository {
     return routes;
   }
 
-  /// Легкий запит лише для рекомендацій на головній (без другого повного getRoutes).
   Future<List<RouteModel>> getRoutesByIds(List<String> ids) async {
     if (ids.isEmpty) return [];
     final data = await _client
@@ -138,7 +136,7 @@ class RoutesRepository {
     await _client.from('routes').delete().eq('id', routeId);
   }
 
-  Future<List<RouteModel>> getMyRoutes() async {
+  Future<List<RouteModel>> getMyRoutes({required bool isPublic}) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return [];
 
@@ -146,6 +144,7 @@ class RoutesRepository {
         .from('routes')
         .select()
         .eq('author_id', userId)
+        .eq('is_public', isPublic)
         .order('created_at', ascending: false);
 
     return (data as List)

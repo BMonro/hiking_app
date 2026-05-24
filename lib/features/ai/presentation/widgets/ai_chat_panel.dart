@@ -5,7 +5,6 @@ import '../../../../core/validation/form_validators.dart';
 import '../../domain/chat_message.dart';
 import '../ai_providers.dart';
 
-/// Картка ШІ-чату: повідомлення + поле вводу внизу.
 class AiChatPanel extends ConsumerStatefulWidget {
   const AiChatPanel({
     super.key,

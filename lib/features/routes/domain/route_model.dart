@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// Значення колонки `routes.route_type` у Supabase.
 class RouteModel {
   final String id;
   final String title;
-  /// `circular` | `linear` | `radial` | `combined`
+
   final String routeType;
   final String difficulty;
   final double distanceKm;
@@ -13,6 +12,7 @@ class RouteModel {
   final String description;
   final String? coverImageUrl;
   final String authorId;
+  final bool isPublic;
   final DateTime createdAt;
 
   const RouteModel({
@@ -26,6 +26,7 @@ class RouteModel {
     required this.description,
     this.coverImageUrl,
     required this.authorId,
+    this.isPublic = true,
     required this.createdAt,
   });
 
@@ -38,7 +39,6 @@ class RouteModel {
 
   static const List<String> storedDifficultyKeys = ['easy', 'medium', 'hard'];
 
-  /// Нормалізація значення з БД / форми.
   static String normalizeStoredRouteType(dynamic raw) {
     final s = raw?.toString().trim().toLowerCase() ?? '';
     if (s.isEmpty) return 'linear';
@@ -75,6 +75,7 @@ class RouteModel {
       description: json['description'] as String? ?? '',
       coverImageUrl: json['cover_image_url'] as String?,
       authorId: json['author_id'] as String? ?? '',
+      isPublic: json['is_public'] as bool? ?? true,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
@@ -92,8 +93,10 @@ class RouteModel {
     }
   }
 
-  Color get difficultyColor {
-    switch (difficulty) {
+  Color get difficultyColor => difficultyColorFor(difficulty);
+
+  static Color difficultyColorFor(String key) {
+    switch (normalizeDifficulty(key)) {
       case 'easy':
         return const Color(0xFF4CAF50);
       case 'medium':

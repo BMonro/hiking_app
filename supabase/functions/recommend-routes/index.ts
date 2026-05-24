@@ -1,4 +1,4 @@
-// deploy: npx supabase functions deploy recommend-routes
+
 
 import { createUserClient } from "../_shared/auth.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";

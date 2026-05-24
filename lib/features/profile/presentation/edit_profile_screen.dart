@@ -23,6 +23,7 @@ class EditProfileScreen extends ConsumerStatefulWidget {
 class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _ageController = TextEditingController();
   final _bioController = TextEditingController();
   final _experienceController = TextEditingController();
@@ -52,6 +53,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     if (data != null && mounted) {
       setState(() {
         _nameController.text = data['full_name'] ?? '';
+        _phoneController.text = data['phone_number']?.toString() ?? '';
         _ageController.text = data['age']?.toString() ?? '';
         _bioController.text = data['bio'] ?? '';
         _fitnessLevel = data['fitness_level'] ?? 'beginner';
@@ -80,6 +82,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _phoneController.dispose();
     _ageController.dispose();
     _bioController.dispose();
     _experienceController.dispose();
@@ -172,9 +175,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         }
       }
 
+      final phone = _phoneController.text.trim();
       await Supabase.instance.client.from('profiles').upsert({
         'id': userId,
         'full_name': _nameController.text.trim(),
+        'phone_number': phone.isEmpty ? null : phone,
         'age': int.tryParse(_ageController.text),
         'bio': _bioController.text.trim(),
         'fitness_level': _fitnessLevel,
@@ -268,7 +273,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const SizedBox(height: 20),
-              // Profile Photo Section
+
               Stack(
                 children: [
                   ProfileAvatar(
@@ -301,7 +306,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               ),
               const SizedBox(height: 32),
 
-              // Form Fields
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -336,6 +340,23 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       decoration: _inputDecoration(
                         'Ім\'я та прізвище',
                         Icons.person_outline,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AppTextFormField(
+                      controller: _phoneController,
+                      keyboardType: TextInputType.phone,
+                      validator: FormValidators.optionalPhone,
+                      decoration: _inputDecoration(
+                        'Номер телефону',
+                        Icons.phone_outlined,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6, left: 4),
+                      child: Text(
+                        'Видимість для інших — у Налаштування → Приватність',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ),
                     const SizedBox(height: 16),

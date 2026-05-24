@@ -1,19 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Навігація на карті (navigation_screen.dart, geolocator) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <!-- Coarse потрібен разом із fine на Android 10–11 (пара geolocator) -->
+
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Аватар: камера (edit_profile_screen.dart — ImageSource.camera) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Галерея: Android 13+ (журнал, реєстрація, профіль — ImageSource.gallery) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <!-- Галерея: Android 10–12 (maxSdk 32) -->
+
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -67,7 +64,6 @@
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
 
-        <!-- MobSF: androidx ProfileInstallReceiver — не потрібен застосунку -->
         <receiver
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
             tools:node="remove" />

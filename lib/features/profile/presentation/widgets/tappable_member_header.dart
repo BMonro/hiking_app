@@ -5,7 +5,6 @@ import '../../data/public_profile_repository.dart';
 import 'profile_avatar.dart';
 import 'user_profile_preview_sheet.dart';
 
-/// Аватар + ім’я; по натисканню — прев’ю профілю.
 class TappableMemberHeader extends ConsumerWidget {
   final String userId;
   final String displayName;

@@ -12,15 +12,12 @@ import '../../../core/validation/form_validators.dart';
 import '../data/auth_service.dart';
 import 'widgets/auth_form_field.dart';
 
-/// Двокрокова реєстрація: (1) імʼя, прізвище, email, пароль
-/// (2) фото, вік, рівень підготовки, досвід, уподобання.
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({
     super.key,
     this.physicalStepOnly = false,
   });
 
-  /// Якщо true — лише крок 2 (після Google OAuth або незавершеного профілю).
   final bool physicalStepOnly;
 
   @override
@@ -30,14 +27,12 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final _auth = AuthService();
 
-  // Крок 1
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
-  // Крок 2
   final _ageController = TextEditingController();
   final _experienceController = TextEditingController();
   String _fitnessLevel = 'intermediate';
@@ -89,7 +84,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// Після Google на екрані реєстрації — крок 2, не «вхід» на головну.
   Future<void> _afterGoogleSignIn() async {
     if (widget.physicalStepOnly || _step == 2) return;
     final user = Supabase.instance.client.auth.currentUser;
@@ -106,7 +100,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           .maybeSingle();
       if (profile != null && profile['age'] != null) return;
     } catch (_) {
-      // показуємо крок 2 навіть без відповіді БД
+
     }
 
     if (!mounted) return;
@@ -225,7 +219,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'На адресу $email надіслано лист.\n\n'
           'Відкрийте посилання на цьому телефоні — має запуститися застосунок Hikora.\n\n'
           'Якщо лист відкривається лише в браузері без переходу в застосунок, '
-          'перевірте налаштування Supabase (файл supabase/AUTH_SETUP_UA.txt).',
+          'перевірте Redirect URLs і Site URL у Supabase Dashboard → Authentication.',
         ),
         actions: [
           TextButton(
@@ -321,7 +315,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// Повертає public URL або null, якщо RLS/бакет не налаштовані — профіль усе одно збережемо.
   Future<String?> _uploadAvatarOrContinueWithout(
     String userId,
     File file,

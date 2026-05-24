@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Яскрава палітра сповіщень (не схожа на помилки).
 class NotificationStyle {
   const NotificationStyle({
     required this.icon,
@@ -25,11 +24,11 @@ class NotificationStyle {
       case 'achievement':
         return const NotificationStyle(
           icon: Icons.emoji_events_rounded,
-          accent: Color(0xFFFF6D00),
+          accent: Color(0xFFE65100),
           iconBg: Color(0xFFFFE0B2),
           cardBg: Color(0xFFFFF8E1),
-          snackBg: Color(0xFFFFB74D),
-          snackText: Color(0xFF4E342E),
+          snackBg: Color(0xFFFFF3E0),
+          snackText: Color(0xFFBF360C),
           actionLabel: Color(0xFFE65100),
         );
       case 'trip_request':
@@ -38,9 +37,9 @@ class NotificationStyle {
           accent: Color(0xFF1565C0),
           iconBg: Color(0xFFBBDEFB),
           cardBg: Color(0xFFE3F2FD),
-          snackBg: Color(0xFF64B5F6),
+          snackBg: Color(0xFFE3F2FD),
           snackText: Color(0xFF0D47A1),
-          actionLabel: Color(0xFF0D47A1),
+          actionLabel: Color(0xFF1565C0),
         );
       case 'trip_approved':
         return const NotificationStyle(
@@ -48,9 +47,9 @@ class NotificationStyle {
           accent: Color(0xFF2E7D32),
           iconBg: Color(0xFFC8E6C9),
           cardBg: Color(0xFFE8F5E9),
-          snackBg: Color(0xFF81C784),
+          snackBg: Color(0xFFE8F5E9),
           snackText: Color(0xFF1B5E20),
-          actionLabel: Color(0xFF1B5E20),
+          actionLabel: Color(0xFF2E7D32),
         );
       case 'trip_rejected':
         return const NotificationStyle(
@@ -58,9 +57,9 @@ class NotificationStyle {
           accent: Color(0xFF7B1FA2),
           iconBg: Color(0xFFE1BEE7),
           cardBg: Color(0xFFF3E5F5),
-          snackBg: Color(0xFFCE93D8),
+          snackBg: Color(0xFFF3E5F5),
           snackText: Color(0xFF4A148C),
-          actionLabel: Color(0xFF4A148C),
+          actionLabel: Color(0xFF7B1FA2),
         );
       case 'new_message':
         return const NotificationStyle(
@@ -68,9 +67,9 @@ class NotificationStyle {
           accent: Color(0xFF00838F),
           iconBg: Color(0xFFB2EBF2),
           cardBg: Color(0xFFE0F7FA),
-          snackBg: Color(0xFF4DD0E1),
+          snackBg: Color(0xFFE0F7FA),
           snackText: Color(0xFF006064),
-          actionLabel: Color(0xFF006064),
+          actionLabel: Color(0xFF00838F),
         );
       default:
         return const NotificationStyle(
@@ -78,9 +77,9 @@ class NotificationStyle {
           accent: Color(0xFF5E35B1),
           iconBg: Color(0xFFD1C4E9),
           cardBg: Color(0xFFEDE7F6),
-          snackBg: Color(0xFF9575CD),
-          snackText: Colors.white,
-          actionLabel: Colors.white,
+          snackBg: Color(0xFFEDE7F6),
+          snackText: Color(0xFF4527A0),
+          actionLabel: Color(0xFF5E35B1),
         );
     }
   }

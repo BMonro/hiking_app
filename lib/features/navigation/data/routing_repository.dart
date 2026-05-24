@@ -5,8 +5,6 @@ import '../../../core/api/backend_api.dart';
 import '../../../core/config/routing_config.dart'
     show GraphHopperConfig, OsrmConfig;
 
-/// Маршрутизація по стежках через Edge Function `route-hike`
-/// (GraphHopper/OSRM на сервері). Локальний fallback — якщо Edge недоступний.
 class RoutingRepository {
   RoutingRepository({Dio? dio, BackendApi? api})
       : _dio = dio ?? Dio(),
@@ -63,8 +61,6 @@ class RoutingRepository {
     }
     return out;
   }
-
-  // --- Локальний fallback (розробка без деплою Edge) ---
 
   Future<List<LatLng>> _fetchHikingRouteLocal(List<LatLng> waypoints) async {
     final key = GraphHopperConfig.apiKey.trim();

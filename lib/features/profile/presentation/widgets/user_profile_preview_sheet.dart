@@ -24,7 +24,6 @@ String fitnessLevelUa(String? v) {
   };
 }
 
-/// Невелике вікно з фото та основною інформацією про учасника походу.
 Future<void> showUserProfilePreview(
   BuildContext context,
   WidgetRef ref, {
@@ -149,6 +148,14 @@ class _UserProfilePreviewSheetState
           'Завершені походи',
           '${profile.experienceCount}',
         ),
+        if (profile.phoneNumber != null) ...[
+          const SizedBox(height: 6),
+          _infoRow(
+            Icons.phone_outlined,
+            'Телефон',
+            profile.phoneNumber!,
+          ),
+        ],
         if (bio.isNotEmpty) ...[
           const SizedBox(height: 14),
           Align(

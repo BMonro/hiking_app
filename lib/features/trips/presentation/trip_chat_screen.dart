@@ -26,13 +26,25 @@ class TripChatScreen extends ConsumerStatefulWidget {
 class _TripChatScreenState extends ConsumerState<TripChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _inputFocus = FocusNode();
   bool _sending = false;
+  Map<String, dynamic>? _replyingTo;
 
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
+    _inputFocus.dispose();
     super.dispose();
+  }
+
+  void _startReply(Map<String, dynamic> message) {
+    setState(() => _replyingTo = message);
+    _inputFocus.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() => _replyingTo = null);
   }
 
   void _scrollToBottom() {
@@ -58,12 +70,16 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
       return;
     }
     if (_sending) return;
+    final replyId = _replyingTo?['id']?.toString();
     setState(() => _sending = true);
     try {
-      await ref
-          .read(tripMessagesProvider(widget.tripId).notifier)
-          .send(widget.tripId, text);
+      await ref.read(tripMessagesProvider(widget.tripId).notifier).send(
+            widget.tripId,
+            text,
+            replyToId: replyId,
+          );
       _controller.clear();
+      _cancelReply();
       _scrollToBottom();
     } on TripChatException catch (e) {
       if (mounted) {
@@ -160,51 +176,85 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                         : '${sent.hour.toString().padLeft(2, '0')}:${sent.minute.toString().padLeft(2, '0')}';
                     return Align(
                       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.88,
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isMine
-                              ? const Color(0xFF2E7D32).withValues(alpha: 0.12)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: isMine
-                                ? const Color(0xFF2E7D32).withValues(alpha: 0.25)
-                                : Colors.grey.shade200,
+                      child: GestureDetector(
+                        onLongPress: () => _startReply(m),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.88,
                           ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            TappableMemberHeader(
-                              userId: senderId,
-                              displayName: label,
-                              avatarUrl: avatarUrl,
-                              avatarRadius: 16,
-                              showYouBadge: isMine,
-                              nameStyle: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                                color: isMine
-                                    ? Colors.black87
-                                    : const Color(0xFF2E7D32),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isMine
+                                ? const Color(0xFF2E7D32).withValues(alpha: 0.12)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: isMine
+                                  ? const Color(0xFF2E7D32).withValues(alpha: 0.25)
+                                  : Colors.grey.shade200,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TappableMemberHeader(
+                                userId: senderId,
+                                displayName: label,
+                                avatarUrl: avatarUrl,
+                                avatarRadius: 16,
+                                showYouBadge: isMine,
+                                nameStyle: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                  color: isMine
+                                      ? Colors.black87
+                                      : const Color(0xFF2E7D32),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              m['content']?.toString() ?? '',
-                              style: const TextStyle(fontSize: 15, height: 1.35),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              timeStr,
-                              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                            ),
-                          ],
+                              if (m['reply_to_id'] != null) ...[
+                                const SizedBox(height: 6),
+                                _ReplyQuote(
+                                  message: m,
+                                  compact: true,
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              Text(
+                                m['content']?.toString() ?? '',
+                                style: const TextStyle(fontSize: 15, height: 1.35),
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    timeStr,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: () => _startReply(m),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(2),
+                                      child: Icon(
+                                        Icons.reply_rounded,
+                                        size: 16,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -217,12 +267,22 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_replyingTo != null)
+                    _ReplyComposerBar(
+                      message: _replyingTo!,
+                      onCancel: _cancelReply,
+                    ),
+                  Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _controller,
+                      focusNode: _inputFocus,
                       minLines: 1,
                       maxLines: 4,
                       maxLength: 2000,
@@ -264,7 +324,129 @@ class _TripChatScreenState extends ConsumerState<TripChatScreen> {
                   ),
                 ],
               ),
+                ],
+              ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyQuote extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final bool compact;
+
+  const _ReplyQuote({
+    required this.message,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final replyLabel = message['_reply_sender_label']?.toString();
+    final replyContent = message['_reply_content']?.toString();
+    final deleted = replyLabel == null && message['reply_to_id'] != null;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 6 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2E7D32).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(
+          left: BorderSide(color: Color(0xFF2E7D32), width: 3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            deleted
+                ? 'Повідомлення недоступне'
+                : (replyLabel ?? 'Учасник'),
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF2E7D32),
+            ),
+          ),
+          if (!deleted && replyContent != null && replyContent.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              replyContent,
+              maxLines: compact ? 2 : 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 12 : 13,
+                color: Colors.grey[800],
+                height: 1.3,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyComposerBar extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final VoidCallback onCancel;
+
+  const _ReplyComposerBar({
+    required this.message,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = message['_sender_label']?.toString() ?? 'Учасник';
+    final preview = message['content']?.toString() ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2E7D32).withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Відповідь: $label',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2E7D32),
+                  ),
+                ),
+                if (preview.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    preview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onCancel,
+            icon: const Icon(Icons.close, size: 20),
+            tooltip: 'Скасувати відповідь',
           ),
         ],
       ),

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Виклик Supabase Edge Functions з єдиним розбором відповіді.
 class BackendApi {
   BackendApi({SupabaseClient? client})
       : _client = client ?? Supabase.instance.client;

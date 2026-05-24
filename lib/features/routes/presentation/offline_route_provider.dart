@@ -8,12 +8,10 @@ final routeOfflineStatusProvider =
   return ref.watch(offlineMapServiceProvider).hasOfflineMap(routeId);
 });
 
-/// Локально збережені офлайн-пакети (тайли + шлях на карті).
 final offlineMapsProvider = FutureProvider<List<OfflineMapPackage>>((ref) async {
   ref.keepAlive();
   return ref.read(offlineMapServiceProvider).listOfflineMaps();
 });
 
-/// Зворотна сумісність імені (якщо десь лишилось посилання).
 @Deprecated('Use offlineMapsProvider')
 final offlineRoutesProvider = offlineMapsProvider;

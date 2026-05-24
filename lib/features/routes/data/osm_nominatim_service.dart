@@ -2,12 +2,10 @@ import 'package:dio/dio.dart';
 
 import '../../../core/api/backend_api.dart';
 
-/// Кирилиця (українські/східнослов'янські назви).
 final RegExp _cyrillicLabel = RegExp(r'[\u0400-\u04FF\u0490-\u052F]');
 
 bool _hasCyrillic(String text) => _cyrillicLabel.hasMatch(text);
 
-/// Найкраща українська назва з OSM-тегів / namedetails Nominatim.
 String? _pickUkrainianNameFromTags(Map<String, dynamic> tags) {
   const keys = [
     'name:uk',
@@ -27,14 +25,13 @@ String? _pickUkrainianNameFromTags(Map<String, dynamic> tags) {
   return cyrillicFallback;
 }
 
-/// Результат пошуку [Nominatim](https://nominatim.org/release-docs/develop/api/Search/) або Overpass (вершини).
 class OsmPlaceResult {
   final String displayName;
   final String primaryLabel;
   final double lat;
   final double lon;
   final int? elevationM;
-  /// Знайдено як вершину (natural=peak у OSM або клас peak у Nominatim).
+
   final bool isPeak;
 
   const OsmPlaceResult({
@@ -229,7 +226,6 @@ class OsmPlaceResult {
   }
 }
 
-/// Параметри пошуку OSM (швидкий режим для погоди vs повний для маршрутів).
 class OsmSearchOptions {
   const OsmSearchOptions({
     this.includePeaks = true,
@@ -243,7 +239,6 @@ class OsmSearchOptions {
     this.overpassTimeoutSec = 25,
   });
 
-  /// Міста/села для погоди: Photon + Nominatim (Україна, bbox лише для пріоритету).
   static const weatherPlaces = OsmSearchOptions(
     includePeaks: false,
     countryCodes: 'ua',
@@ -256,7 +251,6 @@ class OsmSearchOptions {
     overpassTimeoutSec: 0,
   );
 
-  /// Вершини для погоди: Overpass у межах України (окремий запит).
   static const weatherPeaks = OsmSearchOptions(
     includePeaks: true,
     countryCodes: 'ua',
@@ -269,7 +263,6 @@ class OsmSearchOptions {
     overpassTimeoutSec: 8,
   );
 
-  /// Точки маршруту: міста/села (Photon + Nominatim, Україна).
   static const routePointPlaces = OsmSearchOptions(
     includePeaks: false,
     countryCodes: 'ua',
@@ -282,7 +275,6 @@ class OsmSearchOptions {
     overpassTimeoutSec: 0,
   );
 
-  /// Точки маршруту: вершини (Overpass, Україна).
   static const routePointPeaks = OsmSearchOptions(
     includePeaks: true,
     countryCodes: 'ua',
@@ -295,12 +287,12 @@ class OsmSearchOptions {
     overpassTimeoutSec: 10,
   );
 
-  static const _ukraineViewbox = (44.0, 22.0, 52.5, 41.0); // south, west, north, east
+  static const _ukraineViewbox = (44.0, 22.0, 52.5, 41.0);
 
   final bool includePeaks;
   final String? countryCodes;
   final (double south, double west, double north, double east)? viewbox;
-  /// Якщо false — Nominatim/Photon шукають ширше (краще для рідкісних назв).
+
   final bool restrictToViewbox;
   final int nominatimLimit;
   final int peakLimit;
@@ -309,9 +301,6 @@ class OsmSearchOptions {
   final int overpassTimeoutSec;
 }
 
-/// Пошук місць через OpenStreetMap Nominatim + вершини (Overpass).
-///
-/// Дотримуйтесь [політики Nominatim](https://operations.osmfoundation.org/policies/nominatim/).
 class OsmNominatimService {
   OsmNominatimService({Dio? dio, Dio? weatherDio, BackendApi? api})
       : _dio = dio ?? Dio(_baseOptions),
@@ -371,7 +360,6 @@ class OsmNominatimService {
     );
   }
 
-  /// Повний оптимізований пошук для точок маршруту (місця + вершини).
   Future<List<OsmPlaceResult>> search(
     String query, {
     CancelToken? cancelToken,
@@ -396,7 +384,6 @@ class OsmNominatimService {
     }
   }
 
-  /// Міста, села, POI (Photon + Nominatim паралельно).
   Future<List<OsmPlaceResult>> searchForWeatherPlaces(
     String query, {
     CancelToken? cancelToken,
@@ -469,7 +456,6 @@ class OsmNominatimService {
     }
   }
 
-  /// Об'єднати каталог, місця та вершини для підказок у формі.
   List<OsmPlaceResult> mergeRouteSuggestions(
     List<OsmPlaceResult> catalog,
     List<OsmPlaceResult> places,
@@ -507,7 +493,6 @@ class OsmNominatimService {
           .catchError((_) => <OsmPlaceResult>[]),
     ]);
 
-    // Nominatim першим — у відповіді українські назви (Accept-Language: uk).
     var list = _mergePlaces(results[1], results[0], maxItems: 14);
     if (list.isEmpty) {
       list = await _nominatimSearch(
@@ -557,7 +542,6 @@ class OsmNominatimService {
     }
   }
 
-  /// Повний пошук для погоди (місця + вершини).
   Future<List<OsmPlaceResult>> searchForWeather(
     String query, {
     CancelToken? cancelToken,
@@ -627,7 +611,7 @@ class OsmNominatimService {
     final params = <String, dynamic>{
       'q': q,
       'limit': options.nominatimLimit,
-      // Без lang — для UA-запитів частіше кирилиця; uk у Photon не підтримується.
+
     };
     final vb = options.viewbox;
     if (vb != null) {
@@ -678,7 +662,7 @@ class OsmNominatimService {
     };
     final vb = options.viewbox;
     if (vb != null) {
-      // Nominatim: left, top, right, bottom = west, north, east, south
+
       params['viewbox'] = '${vb.$2},${vb.$3},${vb.$4},${vb.$1}';
       if (options.restrictToViewbox) {
         params['bounded'] = 1;

@@ -1,9 +1,12 @@
-// deploy: npx supabase functions deploy route-hike
-// body: { waypoints?: [{lat, lon}], route_id?: string }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { fetchHikingRouteThrough, type LatLng } from "../_shared/routing.ts";
+import {
+  fetchHikingRouteThrough,
+  fetchHikingRouteVariants,
+  type LatLng,
+} from "../_shared/routing.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -32,6 +35,7 @@ Deno.serve(async (req) => {
   let body: {
     waypoints?: { lat: number; lon: number }[];
     route_id?: string;
+    alternatives?: boolean;
   };
   try {
     body = await req.json();
@@ -65,6 +69,22 @@ Deno.serve(async (req) => {
   }
 
   try {
+    if (body.alternatives === true) {
+      const { variants, source } = await fetchHikingRouteVariants(waypoints);
+      return jsonResponse({
+        ok: true,
+        source,
+        variants: variants.map((v) => ({
+          difficulty: v.difficulty,
+          difficulty_label: v.difficulty_label,
+          distance_km: v.distance_km,
+          duration_h: v.duration_h,
+          ascent_m: v.ascent_m,
+          points: v.points.map((p) => ({ lat: p.lat, lon: p.lon })),
+        })),
+      });
+    }
+
     const { points, source } = await fetchHikingRouteThrough(waypoints);
     return jsonResponse({
       ok: true,

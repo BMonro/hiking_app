@@ -5,14 +5,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
+import '../data/elevation_lookup_service.dart';
+import '../data/route_variants_api.dart';
 import '../data/save_route_api.dart';
+import '../domain/route_variant.dart';
 import 'routes_provider.dart';
+import '../domain/hike_duration_estimate.dart';
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/validation/form_validators.dart';
 import '../../../core/widgets/app_text_form_field.dart';
 import 'widgets/osm_route_point_name_field.dart';
+import 'widgets/route_map_coordinate_picker.dart';
+import 'widgets/route_reviews_section.dart' show StarRatingDisplay;
+import 'widgets/route_variants_section.dart';
+import '../../../core/api/backend_api.dart';
+import '../domain/route_rating.dart';
 
 class RoutesScreen extends ConsumerStatefulWidget {
   const RoutesScreen({super.key});
@@ -33,17 +42,20 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final routesAsync = ref.watch(routesProvider);
+    ref.watch(routesProvider);
+    final displayedAsync = ref.watch(displayedRoutesProvider);
     final difficulty = ref.watch(difficultyFilterProvider);
     final routeTypeFilter = ref.watch(routeTypeFilterProvider);
     final durationMaxFilter = ref.watch(durationMaxFilterProvider);
     final ascentMaxFilter = ref.watch(ascentMaxFilterProvider);
+    final sort = ref.watch(routeSortProvider);
 
     final activeFiltersCount = _activeFiltersCount(
       difficulty,
       routeTypeFilter,
       durationMaxFilter,
       ascentMaxFilter,
+      sort,
     );
 
     return Scaffold(
@@ -105,6 +117,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
             child: Row(
               children: [
                 Expanded(
+                  flex: 2,
                   child: OutlinedButton.icon(
                     onPressed: () => _showFiltersSheet(context, ref),
                     style: OutlinedButton.styleFrom(
@@ -145,11 +158,17 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                     label: const Text('Фільтри'),
                   ),
                 ),
+                const SizedBox(width: 10),
+                _RouteSortIconButton(
+                  sort: sort,
+                  onSelected: (v) =>
+                      ref.read(routeSortProvider.notifier).state = v,
+                ),
               ],
             ),
           ),
           Expanded(
-            child: routesAsync.when(
+            child: displayedAsync.when(
               loading: () => const Center(
                 child: CircularProgressIndicator(),
               ),
@@ -163,13 +182,16 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                     Text('Помилка: $e'),
                     const SizedBox(height: 16),
                     ElevatedButton(
-                      onPressed: () => ref.refresh(routesProvider),
+                      onPressed: () {
+                        ref.invalidate(routesProvider);
+                        ref.invalidate(displayedRoutesProvider);
+                      },
                       child: const Text('Спробувати знову'),
                     ),
                   ],
                 ),
               ),
-              data: (routes) => routes.isEmpty
+              data: (items) => items.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -194,17 +216,22 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: routes.length,
-                      itemBuilder: (context, index) => _RouteCard(
-                        route: routes[index],
-                        onOpen: () => context.push(
-                          '/routes/detail/${routes[index].id}',
-                        ),
-                        onEdit: () => unawaited(
-                              _showEditRouteDialog(context, routes[index]),
-                            ),
-                        onDelete: () => _deleteRoute(context, routes[index]),
-                      ),
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        return _RouteCard(
+                          route: item.route,
+                          ratingStats: item.stats,
+                          onOpen: () => context.push(
+                            '/routes/detail/${item.route.id}',
+                          ),
+                          onEdit: () => unawaited(
+                            _showEditRouteDialog(context, item.route),
+                          ),
+                          onDelete: () =>
+                              _deleteRoute(context, item.route),
+                        );
+                      },
                     ),
             ),
           ),
@@ -218,12 +245,14 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
     String routeType,
     double? durationMax,
     int? ascentMax,
+    String sort,
   ) {
     var n = 0;
     if (difficulty != 'all') n++;
     if (routeType != 'all') n++;
     if (durationMax != null) n++;
     if (ascentMax != null) n++;
+    if (sort != 'newest') n++;
     return n;
   }
 
@@ -236,6 +265,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
       text: ref.read(ascentMaxFilterProvider)?.toString() ?? '',
     );
     final diff = <String>[ref.read(difficultyFilterProvider)];
+    var sortValue = ref.read(routeSortProvider);
     final filterFormKey = GlobalKey<FormState>();
 
     showModalBottomSheet(
@@ -333,6 +363,31 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                     decoration: _inputDecoration('Макс. перепад висот (м)'),
                   ),
                   const SizedBox(height: 20),
+                  const Text(
+                    'Сортування',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: sortValue,
+                    decoration: _inputDecoration('Порядок'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'newest',
+                        child: Text('Спочатку новіші'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'rating_desc',
+                        child: Text('За рейтингом (від вищого)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'rating_asc',
+                        child: Text('За рейтингом (від нижчого)'),
+                      ),
+                    ],
+                    onChanged: (v) => sortValue = v ?? 'newest',
+                  ),
+                  const SizedBox(height: 20),
                   Row(
                     children: [
                       Expanded(
@@ -340,6 +395,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                           onPressed: () {
                             diff[0] = 'all';
                             rt[0] = 'all';
+                            sortValue = 'newest';
                             durationController.clear();
                             ascentController.clear();
                             ref.read(difficultyFilterProvider.notifier).state =
@@ -350,6 +406,8 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                                 null;
                             ref.read(ascentMaxFilterProvider.notifier).state =
                                 null;
+                            ref.read(routeSortProvider.notifier).state =
+                                'newest';
                             Navigator.pop(sheetContext);
                           },
                           child: const Text('Скинути все'),
@@ -385,6 +443,8 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
                                 durationValue;
                             ref.read(ascentMaxFilterProvider.notifier).state =
                                 ascentValue;
+                            ref.read(routeSortProvider.notifier).state =
+                                sortValue;
                             Navigator.pop(sheetContext);
                           },
                           child: const Text('Застосувати'),
@@ -433,7 +493,11 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen> {
     if (shouldDelete != true) return;
     try {
       await ref.read(routesRepositoryProvider).deleteRoute(route.id);
-      ref.invalidate(routesProvider);
+      ref
+        ..invalidate(routesProvider)
+        ..invalidate(displayedRoutesProvider)
+        ..invalidate(myPublicRoutesProvider)
+        ..invalidate(myPrivateRoutesProvider);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Маршрут видалено')),
@@ -492,8 +556,7 @@ List<_RoutePointDraft> _draftsFromWaypoints(List<RouteWaypoint>? waypoints) {
 }
 
 class _RoutePointDraft {
-  /// Значення мають збігатися з CHECK у `route_points.point_type`:
-  /// start, finish, peak, water, shelter, danger, viewpoint.
+
   final String pointType;
   final TextEditingController nameController;
   final TextEditingController latController;
@@ -528,7 +591,25 @@ class _RoutePointDraft {
   }
 }
 
-({double distanceKm, int ascentM, double durationH}) _computeFromPoints(
+class RouteComputedStats {
+  final double distanceKm;
+  final int ascentM;
+  final int descentM;
+  final double durationH;
+  final int? elevationRangeM;
+  final String? ascentHint;
+
+  const RouteComputedStats({
+    required this.distanceKm,
+    required this.ascentM,
+    this.descentM = 0,
+    required this.durationH,
+    this.elevationRangeM,
+    this.ascentHint,
+  });
+}
+
+RouteComputedStats _computeFromPoints(
   List<_RoutePointDraft> points,
   Distance distance,
 ) {
@@ -537,31 +618,70 @@ class _RoutePointDraft {
       .whereType<(double, double, int?)>()
       .toList();
 
-  double meters = 0;
-  int ascent = 0;
+  final alts = coords.map((c) => c.$3).whereType<int>().toList();
+
+  final segments = <HikeSegmentInput>[];
   for (var i = 1; i < coords.length; i++) {
     final prev = coords[i - 1];
     final cur = coords[i];
-    meters += distance.as(
+    final segMeters = distance.as(
       LengthUnit.Meter,
       LatLng(prev.$1, prev.$2),
       LatLng(cur.$1, cur.$2),
     );
+    int? delta;
     if (prev.$3 != null && cur.$3 != null) {
-      final diff = cur.$3! - prev.$3!;
-      if (diff > 0) ascent += diff;
+      delta = cur.$3! - prev.$3!;
     }
+    segments.add(HikeSegmentInput(distanceM: segMeters, deltaAltM: delta));
   }
 
-  final km = meters / 1000.0;
-  final elevationHours = ascent / 600.0;
-  final durationH = km == 0 ? 0.0 : (km / 4.0) + elevationHours;
+  final estimate = HikeDurationEstimate.fromSegments(segments);
 
-  return (
-    distanceKm: double.parse(km.toStringAsFixed(2)),
-    ascentM: ascent,
-    durationH: double.parse(durationH.toStringAsFixed(1)),
+  int? elevationRange;
+  final hintParts = <String>[];
+  if (estimate.durationHint != null) {
+    hintParts.add(estimate.durationHint!);
+  }
+  if (alts.length >= 2) {
+    final minAlt = alts.reduce((a, b) => a < b ? a : b);
+    final maxAlt = alts.reduce((a, b) => a > b ? a : b);
+    elevationRange = maxAlt - minAlt;
+    if (estimate.ascentM == 0 &&
+        estimate.descentM == 0 &&
+        elevationRange > 0) {
+      hintParts.add(
+        'Різниця висот точок: $elevationRange м — додайте висоти для точнішого часу',
+      );
+    }
+  } else if (coords.length >= 2 && alts.length < 2) {
+    hintParts.add(
+      'Додайте висоти точок — час врахує підйоми, спуски та втомливість',
+    );
+  }
+
+  return RouteComputedStats(
+    distanceKm: estimate.distanceKm,
+    ascentM: estimate.ascentM,
+    descentM: estimate.descentM,
+    durationH: estimate.durationH,
+    elevationRangeM: elevationRange,
+    ascentHint: hintParts.isEmpty ? null : hintParts.join(' '),
   );
+}
+
+String? _routeTitleFromPointDrafts(List<_RoutePointDraft> points) {
+  _RoutePointDraft? find(String type) {
+    for (final p in points) {
+      if (p.pointType == type) return p;
+    }
+    return null;
+  }
+
+  final startName = find('start')?.name.trim() ?? '';
+  final finishName = find('finish')?.name.trim() ?? '';
+  if (startName.isEmpty || finishName.isEmpty) return null;
+  return '$startName — $finishName';
 }
 
 bool _hasValidStartFinish(List<_RoutePointDraft> points) {
@@ -575,13 +695,10 @@ bool _hasValidStartFinish(List<_RoutePointDraft> points) {
   );
   return start.lat != null &&
       start.lon != null &&
-      start.name.isNotEmpty &&
       finish.lat != null &&
-      finish.lon != null &&
-      finish.name.isNotEmpty;
+      finish.lon != null;
 }
 
-/// У БД не існує типу `waypoint` — проміжні точки зберігаємо як `viewpoint`.
 String _pointTypeForDatabase(String pointType) {
   return pointType == 'waypoint' ? 'viewpoint' : pointType;
 }
@@ -676,6 +793,7 @@ class _PointsEditorState extends State<_PointsEditor> {
           for (var i = 0; i < points.length; i++) ...[
             _PointRow(
               point: points[i],
+              allPoints: points,
               canRemove: points[i].pointType != 'start' &&
                   points[i].pointType != 'finish',
               onRemove: () {
@@ -692,18 +810,111 @@ class _PointsEditorState extends State<_PointsEditor> {
   }
 }
 
-class _PointRow extends StatelessWidget {
+class _PointRow extends StatefulWidget {
   final _RoutePointDraft point;
+  final List<_RoutePointDraft> allPoints;
   final bool canRemove;
   final VoidCallback onRemove;
   final VoidCallback onChanged;
 
   const _PointRow({
     required this.point,
+    required this.allPoints,
     required this.canRemove,
     required this.onRemove,
     required this.onChanged,
   });
+
+  @override
+  State<_PointRow> createState() => _PointRowState();
+}
+
+class _PointRowState extends State<_PointRow> {
+  static final _elevationLookup = ElevationLookupService();
+  Timer? _elevationDebounce;
+  bool _elevationLoading = false;
+
+  _RoutePointDraft get point => widget.point;
+
+  @override
+  void dispose() {
+    _elevationDebounce?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _resolveElevation() async {
+    final lat = point.lat;
+    final lon = point.lon;
+    if (lat == null || lon == null) {
+      point.altController.clear();
+      return;
+    }
+    if (mounted) setState(() => _elevationLoading = true);
+    final ele = await _elevationLookup.fetchElevationM(lat, lon);
+    if (!mounted) return;
+    if (ele != null) {
+      point.altController.text = ele.toString();
+    } else {
+      point.altController.clear();
+    }
+    setState(() => _elevationLoading = false);
+    widget.onChanged();
+  }
+
+  void _scheduleElevationLookup() {
+    _elevationDebounce?.cancel();
+    _elevationDebounce = Timer(const Duration(milliseconds: 600), () {
+      unawaited(_resolveElevation());
+    });
+  }
+
+  void _onCoordsEdited() {
+    widget.onChanged();
+    _scheduleElevationLookup();
+  }
+
+  String _referenceLabel(_RoutePointDraft p, int index) {
+    if (p.pointType == 'start') return 'Старт';
+    if (p.pointType == 'finish') return 'Фініш';
+    final name = p.name;
+    if (name.isNotEmpty) return name;
+    return 'Точка ${index + 1}';
+  }
+
+  List<RouteMapReferencePoint> _otherPointsForMap() {
+    final out = <RouteMapReferencePoint>[];
+    for (var i = 0; i < widget.allPoints.length; i++) {
+      final p = widget.allPoints[i];
+      if (identical(p, point)) continue;
+      final lat = p.lat;
+      final lon = p.lon;
+      if (lat == null || lon == null) continue;
+      out.add(
+        RouteMapReferencePoint(
+          position: LatLng(lat, lon),
+          label: _referenceLabel(p, i),
+          pointType: p.pointType,
+        ),
+      );
+    }
+    return out;
+  }
+
+  Future<void> _pickCoordinatesOnMap(BuildContext context) async {
+    final lat = point.lat;
+    final lon = point.lon;
+    final initial = (lat != null && lon != null) ? LatLng(lat, lon) : null;
+    final picked = await RouteMapCoordinatePickerScreen.show(
+      context,
+      initialCenter: initial,
+      initialSelection: initial,
+      existingPoints: _otherPointsForMap(),
+    );
+    if (picked == null) return;
+    point.latController.text = picked.latitude.toStringAsFixed(6);
+    point.lonController.text = picked.longitude.toStringAsFixed(6);
+    await _resolveElevation();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -711,7 +922,7 @@ class _PointRow extends StatelessWidget {
         ? 'Старт'
         : point.pointType == 'finish'
             ? 'Фініш'
-            : 'Точка'; // viewpoint та інші проміжні
+            : 'Точка';
     final coordsRequired =
         point.pointType == 'start' || point.pointType == 'finish';
 
@@ -729,9 +940,9 @@ class _PointRow extends StatelessWidget {
                 ),
               ),
             ),
-            if (canRemove)
+            if (widget.canRemove)
               IconButton(
-                onPressed: onRemove,
+                onPressed: widget.onRemove,
                 icon: const Icon(Icons.close),
                 tooltip: 'Видалити точку',
               ),
@@ -743,12 +954,25 @@ class _PointRow extends StatelessWidget {
           latController: point.latController,
           lonController: point.lonController,
           altController: point.altController,
-          onCoordinatesApplied: onChanged,
-          nameRequired: coordsRequired,
+          onCoordinatesApplied: () {
+            widget.onChanged();
+            unawaited(_resolveElevation());
+          },
+          nameRequired: false,
         ),
         const SizedBox(height: 8),
         Row(
           children: [
+            IconButton(
+              onPressed: () => _pickCoordinatesOnMap(context),
+              icon: const Icon(Icons.map_outlined),
+              tooltip: 'Обрати на карті',
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFFE8F5E9),
+                foregroundColor: const Color(0xFF2E7D32),
+              ),
+            ),
+            const SizedBox(width: 4),
             Expanded(
               child: TextFormField(
                 controller: point.latController,
@@ -765,7 +989,7 @@ class _PointRow extends StatelessWidget {
                   ),
                   isDense: true,
                 ),
-                onChanged: (_) => onChanged(),
+                onChanged: (_) => _onCoordsEdited(),
               ),
             ),
             const SizedBox(width: 8),
@@ -785,34 +1009,41 @@ class _PointRow extends StatelessWidget {
                   ),
                   isDense: true,
                 ),
-                onChanged: (_) => onChanged(),
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 90,
-              child: TextFormField(
-                controller: point.altController,
-                keyboardType: TextInputType.number,
-                validator: FormValidators.optionalAltitude,
-                decoration: InputDecoration(
-                  hintText: 'Alt',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  isDense: true,
-                ),
-                onChanged: (_) => onChanged(),
+                onChanged: (_) => _onCoordsEdited(),
               ),
             ),
           ],
         ),
+        if (_elevationLoading || point.alt != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              if (_elevationLoading)
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.grey[600],
+                  ),
+                )
+              else
+                Icon(Icons.terrain, size: 14, color: Colors.grey[600]),
+              const SizedBox(width: 6),
+              Text(
+                _elevationLoading
+                    ? 'Визначення висоти…'
+                    : 'Висота (авто): ${point.alt} м',
+                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
 }
 
-/// Повноекранна форма створення / редагування маршруту.
 class RouteEditorScreen extends ConsumerStatefulWidget {
   const RouteEditorScreen({
     super.key,
@@ -845,6 +1076,13 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
   bool _loading = false;
   bool _saving = false;
   bool _initialized = false;
+  String? _ascentStatsHint;
+  bool _variantsLoading = false;
+  List<RouteVariant> _variants = [];
+  int? _selectedVariantIndex;
+  RouteVariant? _chosenVariant;
+  bool _isPublic = true;
+  bool _titleManuallyEdited = false;
 
   bool get _isEdit => widget.route != null;
 
@@ -874,6 +1112,7 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
     _descController.text = route.description;
     _selectedDifficulty = RouteModel.normalizeDifficulty(route.difficulty);
     _selectedRouteType = RouteModel.normalizeStoredRouteType(route.routeType);
+    _isPublic = route.isPublic;
     _disposePointDrafts(_points);
     _points = _draftsFromWaypoints(detail?.waypoints);
     _applyStatsToFields();
@@ -887,10 +1126,92 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
   void _applyStatsToFields() {
     final stats = _computeFromPoints(_points, _distance);
     _distanceController.text = stats.distanceKm.toStringAsFixed(2);
-    _durationController.text =
-        stats.durationH == 0 ? '' : stats.durationH.toStringAsFixed(1);
-    _ascentController.text =
-        stats.ascentM == 0 ? '' : stats.ascentM.toString();
+    _durationController.text = stats.durationH.toStringAsFixed(1);
+    _ascentController.text = stats.ascentM.toString();
+    _ascentStatsHint = stats.ascentHint;
+  }
+
+  void _onPointsChanged() {
+    setState(() {
+      _applyStatsToFields();
+      if (!_isEdit) _applyAutoRouteTitle();
+      _variants = [];
+      _selectedVariantIndex = null;
+      _chosenVariant = null;
+    });
+  }
+
+  void _applyAutoRouteTitle() {
+    if (_titleManuallyEdited) return;
+    final auto = _routeTitleFromPointDrafts(_points);
+    if (auto != null) {
+      _titleController.text = auto;
+    } else {
+      _titleController.clear();
+    }
+  }
+
+  List<LatLng> _waypointsForRouting() {
+    final out = <LatLng>[];
+    for (final p in _points) {
+      final lat = p.lat;
+      final lon = p.lon;
+      if (lat != null && lon != null) out.add(LatLng(lat, lon));
+    }
+    return out;
+  }
+
+  void _applyVariant(int index) {
+    if (index < 0 || index >= _variants.length) return;
+    final v = _variants[index];
+    _distanceController.text = v.distanceKm.toStringAsFixed(2);
+    _durationController.text = v.durationH.toStringAsFixed(1);
+    _ascentController.text = v.ascentM.toString();
+    _ascentStatsHint = v.ascentM == 0
+        ? 'Набір висоти з маршрутизатора; для точніших даних додайте висоти точок'
+        : null;
+    _selectedDifficulty = RouteModel.normalizeDifficulty(v.difficulty);
+    _selectedVariantIndex = index;
+    _chosenVariant = v;
+  }
+
+  Future<void> _suggestVariants() async {
+    if (!_hasValidStartFinish(_points)) {
+      _snack('Додайте координати старту і фінішу');
+      return;
+    }
+    final wps = _waypointsForRouting();
+    if (wps.length < 2) {
+      _snack('Потрібно щонайменше дві точки з координатами');
+      return;
+    }
+
+    setState(() => _variantsLoading = true);
+    try {
+      final list = await RouteVariantsApi().fetchVariants(wps);
+      if (!mounted) return;
+      if (list.isEmpty) {
+        _snack('Не вдалося побудувати маршрут між цими точками');
+        return;
+      }
+      setState(() {
+        _variants = list;
+        _applyVariant(0);
+      });
+      final msg = switch (list.length) {
+        0 => 'Не вдалося побудувати маршрут',
+        1 => 'Знайдено 1 варіант (інші стежки роутер не відрізнив)',
+        2 => 'Знайдено 2 варіанти — оберіть підходящий',
+        _ => 'Знайдено ${list.length} варіанти — оберіть підходящий',
+      };
+      if (list.isNotEmpty) _snack(msg);
+    } on BackendApiException catch (e) {
+      _snack(e.message);
+    } catch (e) {
+      _snack('Помилка побудови: $e');
+    } finally {
+      if (mounted) setState(() => _variantsLoading = false);
+    }
   }
 
   @override
@@ -907,7 +1228,7 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (!_hasValidStartFinish(_points)) {
-      _snack('Додайте старт і фініш: назву та координати');
+      _snack('Додайте старт і фініш: координати');
       return;
     }
 
@@ -929,6 +1250,8 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
             description: description,
             difficulty: _selectedDifficulty,
             points: points,
+            isPublic: _isPublic,
+            chosenRoute: _chosenVariant,
           );
         } else {
           routeId = await saveApi.createRoute(
@@ -937,6 +1260,8 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
             description: description,
             difficulty: _selectedDifficulty,
             points: points,
+            isPublic: _isPublic,
+            chosenRoute: _chosenVariant,
           );
         }
       } catch (_) {
@@ -952,6 +1277,7 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
             'duration_h': stats.durationH,
             'ascent_m': stats.ascentM,
             'difficulty': _selectedDifficulty,
+            'is_public': _isPublic,
           });
           await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
         } else {
@@ -964,15 +1290,19 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
             'duration_h': stats.durationH,
             'ascent_m': stats.ascentM,
             'difficulty': _selectedDifficulty,
-            'is_public': true,
+            'is_public': _isPublic,
             'author_id': authorId,
           });
           await repo.replaceRoutePoints(routeId, _toDbPoints(routeId, _points));
         }
       }
 
-      ref.invalidate(routesProvider);
-      ref.invalidate(routeDetailProvider(routeId));
+      ref
+        ..invalidate(routesProvider)
+        ..invalidate(displayedRoutesProvider)
+        ..invalidate(myPublicRoutesProvider)
+        ..invalidate(myPrivateRoutesProvider)
+        ..invalidate(routeDetailProvider(routeId));
       if (mounted) Navigator.pop(context);
     } catch (e) {
       _snack(_isEdit ? 'Помилка редагування: $e' : 'Помилка: $e');
@@ -1011,8 +1341,67 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
                       AppTextFormField(
                         controller: _titleController,
                         validator: FormValidators.title,
-                        decoration: _routeEditorDecoration('Назва маршруту *'),
+                        onChanged: (_) => _titleManuallyEdited = true,
+                        decoration: _routeEditorDecoration('Назва маршруту *').copyWith(
+                          helperText: !_isEdit &&
+                                  _routeTitleFromPointDrafts(_points) == null
+                              ? 'Вкажіть назви старту та фінішу або введіть назву вручну'
+                              : null,
+                          helperMaxLines: 2,
+                        ),
                       ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Доступ',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment<bool>(
+                            value: true,
+                            label: Text('Публічний'),
+                            icon: Icon(Icons.public, size: 18),
+                          ),
+                          ButtonSegment<bool>(
+                            value: false,
+                            label: Text('Приватний'),
+                            icon: Icon(Icons.lock_outline, size: 18),
+                          ),
+                        ],
+                        selected: {_isPublic},
+                        onSelectionChanged: _saving
+                            ? null
+                            : (selected) {
+                                setState(() => _isPublic = selected.first);
+                              },
+                        style: ButtonStyle(
+                          foregroundColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.selected)
+                                ? Colors.white
+                                : const Color(0xFF2E7D32),
+                          ),
+                          backgroundColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.selected)
+                                ? const Color(0xFF2E7D32)
+                                : Colors.white,
+                          ),
+                        ),
+                      ),
+                      if (!_isPublic) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Лише для вас — у профілі, розділ «Мої маршрути» → «Приватні»',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       Text(
                         'Вид маршруту',
@@ -1055,35 +1444,23 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
                       const SizedBox(height: 16),
                       _PointsEditor(
                         points: _points,
-                        onChanged: () => setState(_applyStatsToFields),
+                        onChanged: _onPointsChanged,
                       ),
                       const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _distanceController,
-                              readOnly: true,
-                              decoration:
-                                  _routeEditorDecoration('Відстань (км)'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _durationController,
-                              readOnly: true,
-                              decoration:
-                                  _routeEditorDecoration('Тривалість (год)'),
-                            ),
-                          ),
-                        ],
+                      RouteVariantsSection(
+                        variants: _variants,
+                        loading: _variantsLoading,
+                        selectedIndex: _selectedVariantIndex,
+                        disabled: _saving,
+                        onSuggest: _suggestVariants,
+                        onSelect: (i) => setState(() => _applyVariant(i)),
                       ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _ascentController,
-                        readOnly: true,
-                        decoration: _routeEditorDecoration('Перепад (м)'),
+                      const SizedBox(height: 16),
+                      _RouteAutoStatsSection(
+                        distanceController: _distanceController,
+                        durationController: _durationController,
+                        ascentController: _ascentController,
+                        ascentHint: _ascentStatsHint,
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -1094,6 +1471,16 @@ class _RouteEditorScreenState extends ConsumerState<RouteEditorScreen> {
                           color: Colors.grey[800],
                         ),
                       ),
+                      if (_chosenVariant != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Підставлено з обраного варіанту — можна змінити вручну',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
@@ -1161,14 +1548,134 @@ InputDecoration _routeEditorDecoration(String label) {
   );
 }
 
+class _RouteAutoStatsSection extends StatelessWidget {
+  final TextEditingController distanceController;
+  final TextEditingController durationController;
+  final TextEditingController ascentController;
+  final String? ascentHint;
+
+  const _RouteAutoStatsSection({
+    required this.distanceController,
+    required this.durationController,
+    required this.ascentController,
+    this.ascentHint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Параметри маршруту',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[800],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _AutoStatField(
+                      label: 'Відстань',
+                      controller: distanceController,
+                      suffix: 'км',
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _AutoStatField(
+                      label: 'Тривалість',
+                      controller: durationController,
+                      suffix: 'год',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _AutoStatField(
+                label: 'Набір висоти',
+                controller: ascentController,
+                suffix: 'м',
+              ),
+            ],
+          ),
+        ),
+        if (ascentHint != null && ascentHint!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            ascentHint!,
+            style: TextStyle(fontSize: 12, color: Colors.grey[700], height: 1.35),
+          ),
+        ],
+        const SizedBox(height: 6),
+        Text(
+          'Тривалість: відстань, підйоми, спуски та втома на довгих ділянках. '
+          'Набір висоти — сума підйомів між точками.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600], height: 1.35),
+        ),
+      ],
+    );
+  }
+}
+
+class _AutoStatField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final String suffix;
+
+  const _AutoStatField({
+    required this.label,
+    required this.controller,
+    required this.suffix,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      readOnly: true,
+      enableInteractiveSelection: false,
+      decoration: InputDecoration(
+        labelText: '$label (авто)',
+        suffixText: suffix,
+        filled: true,
+        fillColor: const Color(0xFFF5F7F4),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+    );
+  }
+}
+
 class _RouteCard extends StatelessWidget {
   final RouteModel route;
+  final RouteRatingAggregate? ratingStats;
   final VoidCallback onOpen;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _RouteCard({
     required this.route,
+    this.ratingStats,
     required this.onOpen,
     required this.onEdit,
     required this.onDelete,
@@ -1257,6 +1764,8 @@ class _RouteCard extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              _RouteCardRating(stats: ratingStats),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -1280,6 +1789,121 @@ class _RouteCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _RouteSortIconButton extends StatelessWidget {
+  final String sort;
+  final ValueChanged<String> onSelected;
+
+  const _RouteSortIconButton({
+    required this.sort,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Color(0xFF2E7D32)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: PopupMenuButton<String>(
+        tooltip: 'Сортування',
+        padding: EdgeInsets.zero,
+        icon: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(Icons.sort, color: Color(0xFF2E7D32)),
+            if (sort != 'newest')
+              Positioned(
+                right: -2,
+                top: -2,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2E7D32),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        onSelected: onSelected,
+        itemBuilder: (context) => [
+          _sortItem('newest', 'Спочатку новіші'),
+          _sortItem('rating_desc', 'За рейтингом (від вищого)'),
+          _sortItem('rating_asc', 'За рейтингом (від нижчого)'),
+        ],
+      ),
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _sortItem(String value, String label) {
+    final selected = sort == value;
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 22,
+            child: selected
+                ? const Icon(Icons.check, size: 18, color: Color(0xFF2E7D32))
+                : null,
+          ),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
+class _RouteCardRating extends StatelessWidget {
+  final RouteRatingAggregate? stats;
+
+  const _RouteCardRating({this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = stats?.count ?? 0;
+    if (count == 0) {
+      return Row(
+        children: [
+          Icon(Icons.star_outline, size: 16, color: Colors.grey[500]),
+          const SizedBox(width: 6),
+          Text(
+            'Без оцінок',
+            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          ),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        StarRatingDisplay(rating: stats!.averageRating, size: 16),
+        const SizedBox(width: 6),
+        Text(
+          stats!.averageRating.toStringAsFixed(1),
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2E7D32),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '(${RouteReviewsSummary.reviewsCountLabel(count)})',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+      ],
     );
   }
 }

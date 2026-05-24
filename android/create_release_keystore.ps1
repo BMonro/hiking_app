@@ -1,5 +1,4 @@
-# Створює release keystore для MobSF / production (не комітиться в git).
-# Запуск з папки android:  .\create_release_keystore.ps1
+
 
 $ErrorActionPreference = "Stop"
 $keystore = Join-Path $PSScriptRoot "app\hikora-release.keystore"
@@ -11,7 +10,7 @@ if (Test-Path $keystore) {
 }
 
 $storePass = Read-Host "Пароль keystore (запам'ятайте для key.properties)"
-$keyPass = Read-Host "Пароль ключа (Enter = той самий)" 
+$keyPass = Read-Host "Пароль ключа (Enter = той самий)"
 if ([string]::IsNullOrWhiteSpace($keyPass)) { $keyPass = $storePass }
 
 & keytool -genkey -v `

@@ -162,6 +162,8 @@ class ProfileScreen extends ConsumerWidget {
                     : (user?.email?[0].toUpperCase() ?? '?');
                 final fitnessLevel = profile?['fitness_level'] as String?;
                 final avatarUrl = profile?['avatar_url'] as String?;
+                final phone = (profile?['phone_number'] as String?)?.trim();
+                final phoneVisible = profile?['phone_visible'] as bool? ?? false;
                 return Container(
                   padding: const EdgeInsets.all(22),
                   decoration: BoxDecoration(
@@ -207,6 +209,38 @@ class ProfileScreen extends ConsumerWidget {
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
+                                if (phone != null && phone.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.phone_outlined,
+                                        size: 16,
+                                        color: Colors.grey[600],
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          phone,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[800],
+                                          ),
+                                        ),
+                                      ),
+                                      if (!phoneVisible)
+                                        Tooltip(
+                                          message:
+                                              'Приховано для інших користувачів',
+                                          child: Icon(
+                                            Icons.visibility_off_outlined,
+                                            size: 16,
+                                            color: Colors.grey[500],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ],
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
@@ -251,46 +285,21 @@ class ProfileScreen extends ConsumerWidget {
                         ],
                       ),
                       const SizedBox(height: 20),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => context.go('/edit-profile'),
-                              icon: const Icon(Icons.edit, size: 18),
-                              label: const Text('Редагувати'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF2E7D32),
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => context.go('/edit-profile'),
+                          icon: const Icon(Icons.edit, size: 18),
+                          label: const Text('Редагувати'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2E7D32),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 50,
-                            height: 50,
-                            child: OutlinedButton(
-                              onPressed: () {},
-                              style: OutlinedButton.styleFrom(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                side: BorderSide(
-                                  color: Colors.green.shade100,
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Icon(
-                                Icons.share_outlined,
-                                color: Colors.green.shade700,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
@@ -307,13 +316,6 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _MenuTile(
-              icon: Icons.person_outline,
-              iconColor: const Color(0xFF7BC5A0),
-              title: 'Мій профіль',
-              onTap: () => context.go('/edit-profile'),
-            ),
-            const SizedBox(height: 10),
             _MenuTile(
               icon: Icons.menu_book_outlined,
               iconColor: const Color(0xFFFFB347),
@@ -336,10 +338,10 @@ class ProfileScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 10),
             _MenuTile(
-              icon: Icons.notifications_outlined,
-              iconColor: const Color(0xFF5C6BC0),
-              title: 'Сповіщення',
-              onTap: () => context.push('/notifications'),
+              icon: Icons.bar_chart_rounded,
+              iconColor: const Color(0xFF24A175),
+              title: 'Статистика',
+              onTap: () => context.push('/statistics'),
             ),
             const SizedBox(height: 10),
             _MenuTile(
@@ -347,30 +349,6 @@ class ProfileScreen extends ConsumerWidget {
               iconColor: Colors.grey,
               title: 'Налаштування застосунку',
               onTap: () => context.go('/settings'),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => context.push('/statistics'),
-                icon: const Icon(Icons.bar_chart_rounded, size: 22),
-                label: const Text(
-                  'Статистика',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF24A175),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 0,
-                ),
-              ),
             ),
           ],
         ),

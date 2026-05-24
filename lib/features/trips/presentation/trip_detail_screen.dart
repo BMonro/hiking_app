@@ -6,7 +6,6 @@ import '../../../core/theme/app_theme.dart';
 import '../../profile/presentation/widgets/tappable_member_header.dart';
 import 'trips_providers.dart';
 
-/// Повна інформація про спільний похід (для перегляду будь-яким користувачем).
 class TripDetailScreen extends ConsumerWidget {
   const TripDetailScreen({
     super.key,

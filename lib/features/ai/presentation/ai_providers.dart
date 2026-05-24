@@ -8,7 +8,6 @@ import '../domain/route_recommendation.dart';
 
 final aiServiceProvider = Provider((ref) => AiService());
 
-/// Кеш: не пінгуємо Edge Function на кожному відкритті головної.
 final aiConfiguredProvider = FutureProvider<bool>((ref) async {
   return ref.watch(aiServiceProvider).isAvailable();
 });

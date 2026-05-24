@@ -15,7 +15,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  /// Рекомендації (Edge Function) — після першого кадру, щоб UI не блокувався.
+
   bool _loadHeavySections = false;
   final _chatScrollController = ScrollController();
 

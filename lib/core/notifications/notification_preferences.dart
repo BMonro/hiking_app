@@ -1,4 +1,4 @@
-/// Локальні налаштування in-app сповіщень (Hive).
+
 class NotificationPreferences {
   const NotificationPreferences({
     this.weatherAlerts = true,
@@ -62,7 +62,6 @@ class NotificationPreferences {
     );
   }
 
-  /// Чи показувати SnackBar для типу з таблиці notifications.
   bool allowsInAppType(String type) {
     switch (type) {
       case 'achievement':

@@ -1,4 +1,4 @@
-/// Локально збережений офлайн-пакет: тайли карти + лінія шляху.
+
 class OfflineMapPackage {
   final String routeId;
   final String title;

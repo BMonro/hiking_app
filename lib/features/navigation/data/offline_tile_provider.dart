@@ -7,7 +7,6 @@ import 'package:flutter_map/flutter_map.dart';
 
 import 'offline_map_service.dart';
 
-/// Світло-сірий непрозорий PNG (8×8) — замість прозорого 1×1, який на карті дає артефакти.
 final ImageProvider _missingTileImage = MemoryImage(
   Uint8List.fromList(
     base64Decode(
@@ -29,7 +28,6 @@ class OfflineTileProvider extends TileProvider {
   final String routeId;
   final OfflineMapService offlineMapService;
 
-  /// Без fallback на OSM — лише локальні тайли (або сірий placeholder).
   final bool offlineOnly;
   final NetworkTileProvider? _networkProvider;
 

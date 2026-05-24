@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Кольори застосунку Hikora.
 abstract final class AppColors {
-  /// Фон основних екранів (світло-сірий).
+
   static const scaffold = Color(0xFFF3F5F2);
 
-  /// Альтернативний фон (головна, досягнення).
   static const scaffoldWarm = Color(0xFFFAFAF7);
 
-  /// Верхня шапка — біла, щоб відділялась від контенту.
   static const toolbar = Color(0xFFFFFFFF);
 
   static const toolbarBorder = Color(0xFFD8E0D8);
@@ -45,8 +42,22 @@ class AppTheme {
       unselectedItemColor: Colors.grey,
       type: BottomNavigationBarType.fixed,
     ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: const Color(0xFFE8F5E9),
+      contentTextStyle: const TextStyle(
+        color: Color(0xFF1B5E20),
+        fontWeight: FontWeight.w500,
+        fontSize: 14,
+      ),
+      actionTextColor: const Color(0xFF2E7D32),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(14)),
+        side: BorderSide(color: Color(0xFFA5D6A7)),
+      ),
+      elevation: 4,
+    ),
   );
 
-  /// Для явного задання в AppBar (якщо екран перевизначає scaffold).
   static const Color toolbarBackground = AppColors.toolbar;
 }

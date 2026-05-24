@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Чи є доступ до інтернету (для погоди, пошуку OSM тощо).
 Future<bool> checkHasNetwork() async {
   try {
     final result = await InternetAddress.lookup('one.one.one.one')
@@ -14,7 +13,6 @@ Future<bool> checkHasNetwork() async {
   }
 }
 
-/// Оновлення кожні 2 с — достатньо для вимкнення Wi‑Fi / мобільних даних.
 final hasNetworkProvider = StreamProvider<bool>((ref) async* {
   yield await checkHasNetwork();
   await for (final _ in Stream.periodic(const Duration(seconds: 2))) {
@@ -22,7 +20,6 @@ final hasNetworkProvider = StreamProvider<bool>((ref) async* {
   }
 });
 
-/// Погода, POI (Overpass) тощо — лише з інтернетом, не в офлайн-навігації.
 bool isOnlineOnlyFeatureAvailable({
   required bool hasNetwork,
   bool offlineNavigation = false,

@@ -1,12 +1,4 @@
-# Заповнення БД тестовими даними через Supabase CLI.
-# Потрібно: npx supabase link (проєкт привʼязаний) АБО виконайте seed_data.sql вручну в SQL Editor.
-#
-# Використання:
-#   cd d:\HikingApp\hiking_app
-#   .\scripts\seed-database.ps1
-#
-# Або з явним project ref:
-#   .\scripts\seed-database.ps1 -ProjectRef your-project-ref
+
 
 param(
   [string]$ProjectRef = ""

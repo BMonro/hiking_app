@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy save-route
-// body: { action: create|update, route_id?, title, route_type, description, difficulty, is_public?, points: [...] }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
@@ -64,6 +63,12 @@ Deno.serve(async (req) => {
     difficulty?: string;
     is_public?: boolean;
     points?: RoutePointInput[];
+    chosen_route?: {
+      geojson?: Record<string, unknown>;
+      distance_km?: number;
+      duration_h?: number;
+      ascent_m?: number;
+    };
   };
   try {
     body = await req.json();
@@ -92,17 +97,41 @@ Deno.serve(async (req) => {
     altitude_m: p.altitude_m != null ? Number(p.altitude_m) : null,
   }));
   const stats = computeRouteStats(statsInput);
+  const chosen = body.chosen_route;
 
   const waypoints: LatLng[] = statsInput.map((p) => ({ lat: p.lat, lon: p.lon }));
   let geojson: Record<string, unknown> | null = null;
-  try {
-    const { points: poly } = await fetchHikingRouteThrough(waypoints);
-    if (poly.length >= 2) {
-      geojson = toGeoJsonLineString(poly);
+  let distance_km = stats.distance_km;
+  let duration_h = stats.duration_h;
+  let ascent_m = stats.ascent_m;
+
+  const chosenGeo = chosen?.geojson;
+  if (
+    chosenGeo &&
+    chosenGeo.type === "LineString" &&
+    Array.isArray(chosenGeo.coordinates) &&
+    (chosenGeo.coordinates as unknown[]).length >= 2
+  ) {
+    geojson = chosenGeo;
+    if (Number.isFinite(Number(chosen?.distance_km))) {
+      distance_km = Number(chosen!.distance_km);
     }
-  } catch (_) {
-    if (waypoints.length >= 2) {
-      geojson = toGeoJsonLineString(waypoints);
+    if (Number.isFinite(Number(chosen?.duration_h))) {
+      duration_h = Number(chosen!.duration_h);
+    }
+    if (Number.isFinite(Number(chosen?.ascent_m))) {
+      ascent_m = Number(chosen!.ascent_m);
+    }
+  } else {
+    try {
+      const { points: poly } = await fetchHikingRouteThrough(waypoints);
+      if (poly.length >= 2) {
+        geojson = toGeoJsonLineString(poly);
+      }
+    } catch (_) {
+      if (waypoints.length >= 2) {
+        geojson = toGeoJsonLineString(waypoints);
+      }
     }
   }
 
@@ -111,9 +140,9 @@ Deno.serve(async (req) => {
     route_type: body.route_type ?? "linear",
     description: body.description?.trim() ?? "",
     difficulty: body.difficulty ?? "easy",
-    distance_km: stats.distance_km,
-    duration_h: stats.duration_h,
-    ascent_m: stats.ascent_m,
+    distance_km,
+    duration_h,
+    ascent_m,
     geojson,
   };
 
@@ -166,9 +195,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "forbidden" }, 403);
     }
 
+    const updatePayload: Record<string, unknown> = { ...routePayload };
+    if (typeof body.is_public === "boolean") {
+      updatePayload.is_public = body.is_public;
+    }
+
     const { error: updErr } = await supabase
       .from("routes")
-      .update(routePayload)
+      .update(updatePayload)
       .eq("id", routeId);
     if (updErr) throw updErr;
 

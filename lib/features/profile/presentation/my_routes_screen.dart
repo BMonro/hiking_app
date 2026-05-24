@@ -22,7 +22,7 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(_handleTabChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.invalidate(offlineMapsProvider);
@@ -31,7 +31,7 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
 
   void _handleTabChange() {
     if (_tabController.indexIsChanging) return;
-    if (_tabController.index == 1) {
+    if (_tabController.index == 2) {
       ref.invalidate(offlineMapsProvider);
     }
   }
@@ -61,7 +61,8 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
           unselectedLabelColor: Colors.grey,
           indicatorColor: const Color(0xFF2E7D32),
           tabs: const [
-            Tab(text: 'Створені'),
+            Tab(text: 'Публічні'),
+            Tab(text: 'Приватні'),
             Tab(text: 'Офлайн'),
           ],
         ),
@@ -69,7 +70,8 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
       body: TabBarView(
         controller: _tabController,
         children: const [
-          _MyAuthoredRoutesTab(),
+          _MyPublicRoutesTab(),
+          _MyPrivateRoutesTab(),
           _OfflineRoutesTab(),
         ],
       ),
@@ -77,12 +79,12 @@ class _MyRoutesScreenState extends ConsumerState<MyRoutesScreen>
   }
 }
 
-class _MyAuthoredRoutesTab extends ConsumerWidget {
-  const _MyAuthoredRoutesTab();
+class _MyPublicRoutesTab extends ConsumerWidget {
+  const _MyPublicRoutesTab();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final routesAsync = ref.watch(myRoutesProvider);
+    final routesAsync = ref.watch(myPublicRoutesProvider);
 
     return routesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -91,8 +93,9 @@ class _MyAuthoredRoutesTab extends ConsumerWidget {
         if (routes.isEmpty) {
           return const _EmptyState(
             icon: Icons.terrain_outlined,
-            title: 'Ще немає створених маршрутів',
-            subtitle: 'Додайте маршрут у каталозі, щоб він з’явився тут.',
+            title: 'Немає публічних маршрутів',
+            subtitle:
+                'Створіть маршрут у каталозі з доступом «Публічний» — він з’явиться тут і в загальному списку.',
           );
         }
 
@@ -101,6 +104,40 @@ class _MyAuthoredRoutesTab extends ConsumerWidget {
           itemCount: routes.length,
           itemBuilder: (context, index) => _RouteListCard(
             route: routes[index],
+            onTap: () => context.push('/routes/detail/${routes[index].id}'),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MyPrivateRoutesTab extends ConsumerWidget {
+  const _MyPrivateRoutesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final routesAsync = ref.watch(myPrivateRoutesProvider);
+
+    return routesAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Помилка: $e')),
+      data: (routes) {
+        if (routes.isEmpty) {
+          return const _EmptyState(
+            icon: Icons.lock_outline,
+            title: 'Немає приватних маршрутів',
+            subtitle:
+                'При створенні маршруту оберіть «Приватний» — він буде видимий лише вам у цьому розділі.',
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          itemCount: routes.length,
+          itemBuilder: (context, index) => _RouteListCard(
+            route: routes[index],
+            showPrivateBadge: true,
             onTap: () => context.push('/routes/detail/${routes[index].id}'),
           ),
         );
@@ -198,10 +235,12 @@ class _OfflineRoutesTab extends ConsumerWidget {
 class _RouteListCard extends StatelessWidget {
   final RouteModel route;
   final VoidCallback onTap;
+  final bool showPrivateBadge;
 
   const _RouteListCard({
     required this.route,
     required this.onTap,
+    this.showPrivateBadge = false,
   });
 
   @override
@@ -232,6 +271,37 @@ class _RouteListCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (showPrivateBadge || !route.isPublic)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.lock_outline,
+                            size: 14,
+                            color: Colors.grey[700],
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Приватний',
+                            style: TextStyle(
+                              color: Colors.grey[800],
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,

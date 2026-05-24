@@ -2,7 +2,6 @@ import 'package:latlong2/latlong.dart';
 
 import '../../routes/domain/route_detail.dart';
 
-/// Лінія маршруту для офлайн-навігації (без метаданих маршруту з БД).
 class OfflineRoutePath {
   final String routeId;
   final String title;

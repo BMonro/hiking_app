@@ -1,4 +1,4 @@
-/** OpenWeatherMap — виклики з сервера. */
+
 
 const BASE = "https://api.openweathermap.org/data/2.5";
 

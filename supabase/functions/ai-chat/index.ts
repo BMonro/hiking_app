@@ -1,6 +1,4 @@
-// Деплой: supabase functions deploy ai-chat
-// Секрети: supabase secrets set OPENAI_API_KEY=sk-...
-// Опційно: OPENAI_BASE_URL, OPENAI_MODEL
+
 
 import { createUserClient } from "../_shared/auth.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";

@@ -1,6 +1,5 @@
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-/** Організатор або схвалений учасник; похід не скасовано. */
 export async function canAccessTripChat(
   supabase: SupabaseClient,
   userId: string,

@@ -1,4 +1,5 @@
 import '../../../core/api/backend_api.dart';
+import '../domain/route_variant.dart';
 
 class SaveRouteApi {
   SaveRouteApi({BackendApi? api}) : _api = api ?? BackendApi();
@@ -12,6 +13,7 @@ class SaveRouteApi {
     required String difficulty,
     required List<Map<String, dynamic>> points,
     bool isPublic = true,
+    RouteVariant? chosenRoute,
   }) async {
     final data = await _api.invoke(
       'save-route',
@@ -23,6 +25,8 @@ class SaveRouteApi {
         'difficulty': difficulty,
         'is_public': isPublic,
         'points': points,
+        if (chosenRoute != null)
+          'chosen_route': chosenRoute.toChosenRoutePayload(),
       },
       timeout: const Duration(seconds: 120),
     );
@@ -36,6 +40,8 @@ class SaveRouteApi {
     required String description,
     required String difficulty,
     required List<Map<String, dynamic>> points,
+    bool? isPublic,
+    RouteVariant? chosenRoute,
   }) async {
     final data = await _api.invoke(
       'save-route',
@@ -46,7 +52,10 @@ class SaveRouteApi {
         'route_type': routeType,
         'description': description,
         'difficulty': difficulty,
+        if (isPublic != null) 'is_public': isPublic,
         'points': points,
+        if (chosenRoute != null)
+          'chosen_route': chosenRoute.toChosenRoutePayload(),
       },
       timeout: const Duration(seconds: 120),
     );

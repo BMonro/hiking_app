@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy trip-actions
-// actions: apply | decide | cancel | create | update | close | complete | leave
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { createServiceClient } from "../_shared/auth.ts";

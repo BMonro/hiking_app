@@ -1,4 +1,4 @@
-/// Централізовані валідатори полів вводу. Повертають `null`, якщо значення коректне.
+
 abstract final class FormValidators {
   static final RegExp _emailPattern = RegExp(
     r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
@@ -207,6 +207,23 @@ abstract final class FormValidators {
     if (trim(value).length > 1000) {
       return 'Про себе: максимум 1000 символів';
     }
+    return null;
+  }
+
+  static String? reviewComment(String? value) {
+    final v = trim(value);
+    if (v.length > 1000) return 'Відгук: максимум 1000 символів';
+    return null;
+  }
+
+  static String? optionalPhone(String? value) {
+    final v = trim(value);
+    if (v.isEmpty) return null;
+    final digits = v.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 9 || digits.length > 15) {
+      return 'Введіть коректний номер телефону';
+    }
+    if (v.length > 20) return 'Номер занадто довгий';
     return null;
   }
 

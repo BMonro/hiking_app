@@ -21,17 +21,40 @@ String _fitnessLevelUa(String? v) {
   };
 }
 
-class GroupHikesScreen extends ConsumerWidget {
+class GroupHikesScreen extends ConsumerStatefulWidget {
   const GroupHikesScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<GroupHikesScreen> createState() => _GroupHikesScreenState();
+}
+
+class _GroupHikesScreenState extends ConsumerState<GroupHikesScreen> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     ref.watch(tripsRealtimeSyncProvider);
 
     final tripsAsync = ref.watch(groupHikesProvider);
-    final filter = ref.watch(groupHikeFilterProvider);
-    final search = ref.watch(groupHikeSearchProvider).trim().toLowerCase();
+    final search = ref.watch(groupHikeSearchProvider);
+    final scope = ref.watch(tripScopeFilterProvider);
+    final difficulty = ref.watch(tripDifficultyFilterProvider);
+    final routeType = ref.watch(tripRouteTypeFilterProvider);
+    final sort = ref.watch(tripSortProvider);
     final userId = Supabase.instance.client.auth.currentUser!.id;
+
+    final activeFiltersCount = activeTripFiltersCount(
+      scope: scope,
+      difficulty: difficulty,
+      routeType: routeType,
+      sort: sort,
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5F2),
@@ -65,6 +88,7 @@ class GroupHikesScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
+              controller: _searchController,
               maxLength: 120,
               buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
                   null,
@@ -85,94 +109,75 @@ class GroupHikesScreen extends ConsumerWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 36,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(
               children: [
-                _FilterPill(
-                  label: 'Всі',
-                  value: 'all',
-                  selected: filter == 'all',
+                Expanded(
+                  flex: 2,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showFiltersSheet(context),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF2E7D32),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFF2E7D32)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Icon(Icons.tune),
+                        if (activeFiltersCount > 0)
+                          Positioned(
+                            right: -6,
+                            top: -6,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF2E7D32),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                '$activeFiltersCount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    label: const Text('Фільтри'),
+                  ),
                 ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Мої',
-                  value: 'mine',
-                  selected: filter == 'mine',
-                ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Відкриті',
-                  value: 'open',
-                  selected: filter == 'open',
-                ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Легкі',
-                  value: 'easy',
-                  selected: filter == 'easy',
-                ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Середні',
-                  value: 'medium',
-                  selected: filter == 'medium',
-                ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Складні',
-                  value: 'hard',
-                  selected: filter == 'hard',
-                ),
-                const SizedBox(width: 8),
-                _FilterPill(
-                  label: 'Кільцеві',
-                  value: 'circular',
-                  selected: filter == 'circular',
+                const SizedBox(width: 10),
+                _TripSortIconButton(
+                  sort: sort,
+                  onSelected: (v) =>
+                      ref.read(tripSortProvider.notifier).state = v,
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
           Expanded(
             child: tripsAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Помилка: $e')),
               data: (trips) {
-                final filtered = trips.where((trip) {
-                  final route = trip['routes'] as Map<String, dynamic>?;
-                  final title = (trip['title'] ?? '').toString().toLowerCase();
-                  final code = (trip['trip_code'] ?? '').toString().toLowerCase();
-                  final id = (trip['id'] ?? '').toString().toLowerCase();
-                  final status = (trip['status'] ?? 'open').toString();
-                  final isMine = trip['organizer_id'] == userId;
-                  final difficulty = route?['difficulty']?.toString();
-                  final isEasy = difficulty == 'easy';
-                  final isMedium = difficulty == 'medium';
-                  final isHard = difficulty == 'hard';
-                  final routeType =
-                      RouteModel.normalizeStoredRouteType(route?['route_type']);
-                  final isCircular = routeType == 'circular';
-                  final matchesSearch = search.isEmpty ||
-                      title.contains(search) ||
-                      code.contains(search) ||
-                      id.contains(search);
-
-                  final matchesFilter = switch (filter) {
-                    'mine' => isMine,
-                    'easy' => isEasy,
-                    'medium' => isMedium,
-                    'hard' => isHard,
-                    'circular' => isCircular,
-                    'open' => status == 'open',
-                    _ => true,
-                  };
-
-                  return matchesSearch && matchesFilter;
-                }).toList();
+                final filtered = filterAndSortGroupTrips(
+                  trips: trips,
+                  userId: userId,
+                  search: search,
+                  scope: scope,
+                  difficulty: difficulty,
+                  routeType: routeType,
+                  sort: sort,
+                );
 
                 if (filtered.isEmpty) {
                   return const Center(
@@ -201,6 +206,231 @@ class GroupHikesScreen extends ConsumerWidget {
     );
   }
 
+  void _showFiltersSheet(BuildContext context) {
+    final scopeValue = <String>[ref.read(tripScopeFilterProvider)];
+    final diff = <String>[ref.read(tripDifficultyFilterProvider)];
+    final rt = <String>[ref.read(tripRouteTypeFilterProvider)];
+    var sortValue = ref.read(tripSortProvider);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModal) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 24,
+              right: 24,
+              top: 24,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Фільтри',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Показати',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _TripSheetDiffPill(
+                        label: 'Всі',
+                        selected: scopeValue[0] == 'all',
+                        onTap: () => setModal(() => scopeValue[0] = 'all'),
+                      ),
+                      _TripSheetDiffPill(
+                        label: 'Мої',
+                        selected: scopeValue[0] == 'mine',
+                        onTap: () => setModal(() => scopeValue[0] = 'mine'),
+                      ),
+                      _TripSheetDiffPill(
+                        label: 'Відкриті',
+                        selected: scopeValue[0] == 'open',
+                        onTap: () => setModal(() => scopeValue[0] = 'open'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Складність маршруту',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _TripSheetDiffPill(
+                        label: 'Всі',
+                        selected: diff[0] == 'all',
+                        onTap: () => setModal(() => diff[0] = 'all'),
+                      ),
+                      _TripSheetDiffPill(
+                        label: 'Легкі',
+                        selected: diff[0] == 'easy',
+                        onTap: () => setModal(() => diff[0] = 'easy'),
+                      ),
+                      _TripSheetDiffPill(
+                        label: 'Середні',
+                        selected: diff[0] == 'medium',
+                        onTap: () => setModal(() => diff[0] = 'medium'),
+                      ),
+                      _TripSheetDiffPill(
+                        label: 'Важкі',
+                        selected: diff[0] == 'hard',
+                        onTap: () => setModal(() => diff[0] = 'hard'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  DropdownButtonFormField<String>(
+                    initialValue: rt[0],
+                    decoration: _filterInputDecoration('Вид маршруту'),
+                    items: [
+                      const DropdownMenuItem(
+                        value: 'all',
+                        child: Text('Усі види'),
+                      ),
+                      ...RouteModel.storedRouteTypeKeys.map(
+                        (k) => DropdownMenuItem<String>(
+                          value: k,
+                          child: Text(RouteModel.labelUkForRouteType(k)),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setModal(() => rt[0] = value ?? 'all'),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Сортування',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: sortValue,
+                    decoration: _filterInputDecoration('Порядок'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'newest',
+                        child: Text('Спочатку новіші'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'start_asc',
+                        child: Text('За датою початку (найближчі)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'start_desc',
+                        child: Text('За датою початку (найдальші)'),
+                      ),
+                    ],
+                    onChanged: (v) => sortValue = v ?? 'newest',
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            scopeValue[0] = 'all';
+                            diff[0] = 'all';
+                            rt[0] = 'all';
+                            sortValue = 'newest';
+                            ref.read(tripScopeFilterProvider.notifier).state =
+                                'all';
+                            ref.read(tripDifficultyFilterProvider.notifier).state =
+                                'all';
+                            ref.read(tripRouteTypeFilterProvider.notifier).state =
+                                'all';
+                            ref.read(tripSortProvider.notifier).state = 'newest';
+                            Navigator.pop(sheetContext);
+                          },
+                          child: const Text('Скинути все'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2E7D32),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () {
+                            ref.read(tripScopeFilterProvider.notifier).state =
+                                scopeValue[0];
+                            ref.read(tripDifficultyFilterProvider.notifier).state =
+                                diff[0];
+                            ref.read(tripRouteTypeFilterProvider.notifier).state =
+                                rt[0];
+                            ref.read(tripSortProvider.notifier).state =
+                                sortValue;
+                            Navigator.pop(sheetContext);
+                          },
+                          child: const Text('Застосувати'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  InputDecoration _filterInputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    );
+  }
+
+  void _applyRouteToTripFields({
+    required Map<String, dynamic> route,
+    required TextEditingController titleController,
+    required TextEditingController descController,
+  }) {
+    final routeTitle = route['title']?.toString().trim() ?? '';
+    if (routeTitle.isNotEmpty) {
+      titleController.text = routeTitle;
+    }
+    descController.text = _tripDescriptionFromRoute(route);
+  }
+
+  String _tripDescriptionFromRoute(Map<String, dynamic> route) {
+    final fromRoute = route['description']?.toString().trim() ?? '';
+    if (fromRoute.isNotEmpty) return fromRoute;
+
+    final title = route['title']?.toString().trim() ?? 'маршрут';
+    final diff = _difficultyLabel(route['difficulty']);
+    final km = route['distance_km'];
+    final type = RouteModel.labelUkForRouteType(
+      RouteModel.normalizeStoredRouteType(route['route_type']),
+    );
+    final buffer = StringBuffer('Груповий похід за маршрутом «$title».');
+    if (diff != 'Не вказано') buffer.write(' Складність: $diff.');
+    buffer.write(' Вид: $type.');
+    if (km != null) buffer.write(' Дистанція: $km км.');
+    return buffer.toString();
+  }
+
   Future<void> _showUpsertTripDialog(
     BuildContext context,
     WidgetRef ref, {
@@ -225,7 +455,9 @@ class GroupHikesScreen extends ConsumerWidget {
 
     final routes = await Supabase.instance.client
         .from('routes')
-        .select('id, title, difficulty, distance_km, route_type, route_points(name, point_type)')
+        .select(
+          'id, title, description, difficulty, distance_km, route_type, route_points(name, point_type)',
+        )
         .eq('is_public', true)
         .order('created_at', ascending: false);
     final routeList = List<Map<String, dynamic>>.from(routes);
@@ -257,7 +489,6 @@ class GroupHikesScreen extends ConsumerWidget {
               .map((p) => p['name']?.toString() ?? 'Точка')
               .take(6)
               .toList();
-
           return Padding(
             padding: EdgeInsets.only(
               left: 24,
@@ -295,7 +526,20 @@ class GroupHikesScreen extends ConsumerWidget {
                           ),
                         )
                         .toList(),
-                    onChanged: (value) => setModalState(() => selectedRouteId = value),
+                    onChanged: (value) {
+                      setModalState(() => selectedRouteId = value);
+                      if (value == null) return;
+                      final route = routeList
+                          .where((r) => r['id'].toString() == value)
+                          .firstOrNull;
+                      if (route != null) {
+                        _applyRouteToTripFields(
+                          route: route,
+                          titleController: titleController,
+                          descController: descController,
+                        );
+                      }
+                    },
                   ),
                   const SizedBox(height: 12),
                   if (selectedRoute != null)
@@ -527,23 +771,96 @@ class GroupHikesScreen extends ConsumerWidget {
   }
 }
 
-class _FilterPill extends ConsumerWidget {
-  final String label;
-  final String value;
-  final bool selected;
+class _TripSortIconButton extends StatelessWidget {
+  final String sort;
+  final ValueChanged<String> onSelected;
 
-  const _FilterPill({
-    required this.label,
-    required this.value,
-    required this.selected,
+  const _TripSortIconButton({
+    required this.sort,
+    required this.onSelected,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFF2E7D32)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: PopupMenuButton<String>(
+          tooltip: 'Сортування',
+          padding: EdgeInsets.zero,
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.sort, color: Color(0xFF2E7D32)),
+              if (sort != 'newest')
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF2E7D32),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          onSelected: onSelected,
+          itemBuilder: (context) => [
+            _sortItem('newest', 'Спочатку новіші'),
+            _sortItem('start_asc', 'За датою початку (найближчі)'),
+            _sortItem('start_desc', 'За датою початку (найдальші)'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _sortItem(String value, String label) {
+    final selected = sort == value;
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 22,
+            child: selected
+                ? const Icon(Icons.check, size: 18, color: Color(0xFF2E7D32))
+                : null,
+          ),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
+class _TripSheetDiffPill extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TripSheetDiffPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => ref.read(groupHikeFilterProvider.notifier).state = value,
+      onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFF2E7D32) : Colors.white,
           borderRadius: BorderRadius.circular(20),
@@ -554,7 +871,7 @@ class _FilterPill extends ConsumerWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? Colors.white : Colors.grey[700],
+            color: selected ? Colors.white : Colors.grey[800],
             fontSize: 13,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),

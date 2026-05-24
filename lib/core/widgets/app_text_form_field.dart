@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Стандартне поле форми з підтримкою [validator].
 class AppTextFormField extends StatelessWidget {
   const AppTextFormField({
     super.key,

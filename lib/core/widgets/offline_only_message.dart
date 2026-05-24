@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Повідомлення, коли функція недоступна без інтернету.
 class OfflineOnlyMessage extends StatelessWidget {
   final IconData icon;
   final String title;

@@ -8,7 +8,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/osm_nominatim_service.dart';
 
-/// Поле назви точки з підказками: каталог маршрутів + OpenStreetMap.
 class OsmRoutePointNameField extends StatefulWidget {
   final TextEditingController nameController;
   final TextEditingController latController;
@@ -191,7 +190,7 @@ class _OsmRoutePointNameFieldState extends State<OsmRoutePointNameField> {
             .catchError((_) => const <OsmPlaceResult>[]),
       ]).timeout(const Duration(seconds: 8));
     } on TimeoutException {
-      // Показуємо те, що встигло завантажитись.
+
     }
 
     if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;

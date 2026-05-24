@@ -9,7 +9,7 @@ class RouteWaypoint {
   final LatLng position;
   final String pointType;
   final int sortOrder;
-  /// Значення `route_points.altitude_m` у БД.
+
   final int? altitudeM;
 
   const RouteWaypoint({
@@ -46,8 +46,6 @@ class RouteDetail {
   });
 }
 
-/// Витягує координати лінії з GeoJSON (Feature / LineString / MultiLineString спрощено).
-/// Якщо Supabase повертає JSONB як рядок — декодуємо.
 List<LatLng>? parseRoutePolylineFromGeoJson(dynamic geojson) {
   if (geojson == null) return null;
   dynamic decoded = geojson;

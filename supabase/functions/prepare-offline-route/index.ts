@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy prepare-offline-route
-// body: { route_id: string }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
@@ -76,7 +75,7 @@ Deno.serve(async (req) => {
         polyline = routed.points;
         source = routed.source;
       }
-    } catch (_) { /* fallback */ }
+    } catch (_) {  }
 
     if (polyline.length < 2 && route.geojson) {
       const coords = extractGeoJsonCoords(route.geojson);

@@ -1,4 +1,4 @@
-/// Підсумок завершеної навігації для збереження в журнал.
+
 class HikeSessionSummary {
   const HikeSessionSummary({
     this.routeId,

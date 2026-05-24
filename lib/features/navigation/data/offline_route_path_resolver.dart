@@ -4,7 +4,6 @@ import '../../routes/domain/route_detail.dart';
 import 'prepare_offline_api.dart';
 import 'routing_repository.dart';
 
-/// Побудова лінії шляху для офлайн-пакета (Edge `prepare-offline-route` або routing).
 Future<List<LatLng>> resolveRoutePathPolyline(
   RouteDetail detail,
   RoutingRepository routing,

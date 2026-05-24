@@ -8,11 +8,14 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/offline_only_message.dart';
 import '../domain/route_detail.dart';
 import '../domain/route_model.dart';
+import '../domain/route_rating.dart';
 import '../../navigation/data/offline_route_path_resolver.dart';
 import '../../navigation/data/routing_repository.dart';
 import 'offline_route_provider.dart';
 import 'routes_provider.dart';
 import 'routes_screen.dart' show RouteEditorScreen;
+import 'widgets/route_reviews_section.dart'
+    show RouteReviewsPreviewTile, StarRatingDisplay;
 
 class RouteDetailsScreen extends ConsumerWidget {
   final String routeId;
@@ -129,6 +132,8 @@ class _RouteDetailBody extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          _RouteRatingChip(routeId: routeId),
           const SizedBox(height: 20),
           const Text(
             'Огляд',
@@ -199,6 +204,16 @@ class _RouteDetailBody extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(height: 24),
+          const Text(
+            'Рейтинг та відгуки',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          RouteReviewsPreviewTile(
+            routeId: routeId,
+            authorId: route.authorId,
+          ),
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
@@ -299,8 +314,12 @@ class _RouteDetailBody extends StatelessWidget {
                           await ref
                               .read(routesRepositoryProvider)
                               .deleteRoute(routeId);
-                          ref.invalidate(routesProvider);
-                          ref.invalidate(routeDetailProvider(routeId));
+                          ref
+                            ..invalidate(routesProvider)
+                            ..invalidate(displayedRoutesProvider)
+                            ..invalidate(myPublicRoutesProvider)
+                            ..invalidate(myPrivateRoutesProvider)
+                            ..invalidate(routeDetailProvider(routeId));
                           if (context.mounted) context.pop();
                         } catch (e) {
                           if (context.mounted) {
@@ -371,7 +390,7 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
       try {
         await routesRepo.saveOfflineRoute(widget.routeId, sizeMb);
       } catch (_) {
-        // Локальний кеш уже збережено — офлайн-карта працюватиме без запису в БД.
+
       }
 
       ref
@@ -524,6 +543,42 @@ class _OfflineDownloadButtonState extends ConsumerState<_OfflineDownloadButton> 
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+class _RouteRatingChip extends ConsumerWidget {
+  final String routeId;
+
+  const _RouteRatingChip({required this.routeId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final reviewsAsync = ref.watch(routeReviewsProvider(routeId));
+    return reviewsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (summary) {
+        if (summary.count == 0) return const SizedBox.shrink();
+        return Row(
+          children: [
+            StarRatingDisplay(
+              rating: summary.averageRating ?? 0,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${summary.averageLabel} · '
+              '${RouteReviewsSummary.reviewsCountLabel(summary.count)}',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800],
+              ),
+            ),
+          ],
         );
       },
     );

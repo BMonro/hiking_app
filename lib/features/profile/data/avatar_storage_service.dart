@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Завантаження аватарів у Supabase Storage (bucket `avatars`).
 class AvatarStorageService {
   AvatarStorageService({SupabaseClient? client})
       : _client = client ?? Supabase.instance.client;
@@ -11,10 +10,8 @@ class AvatarStorageService {
 
   final SupabaseClient _client;
 
-  /// Шлях у бакеті: `{userId}-avatar.jpg` (відповідає RLS `uid-%`).
   static String objectPath(String userId) => '$userId-avatar.jpg';
 
-  /// Public URL після успішного upload.
   Future<String> uploadAvatar({
     required String userId,
     required File imageFile,
@@ -39,7 +36,7 @@ class AvatarStorageService {
     }
 
     final baseUrl = _client.storage.from(bucket).getPublicUrl(path);
-    // Оновлення того самого файлу (upsert) — обходимо кеш зображення в UI.
+
     return '$baseUrl?v=${DateTime.now().millisecondsSinceEpoch}';
   }
 

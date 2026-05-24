@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Поле форми з червоною обводкою та текстом помилки під полем.
 class AuthFormField extends StatelessWidget {
   const AuthFormField({
     super.key,

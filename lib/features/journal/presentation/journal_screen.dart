@@ -33,7 +33,6 @@ final journalStatsProvider = FutureProvider((ref) async {
   return data;
 });
 
-/// Гамма як у [RoutesScreen]: фон `0xFFF3F5F2`, акцент `0xFF2E7D32`.
 class _JournalTheme {
   static const background = Color(0xFFF3F5F2);
   static const primary = Color(0xFF2E7D32);

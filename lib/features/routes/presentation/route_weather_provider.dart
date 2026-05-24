@@ -117,7 +117,6 @@ bool _looksLikeRain(String description) {
       d.contains('опад');
 }
 
-/// Погода на маршруті через Edge Function `weather` (action: route).
 final routeOpenWeatherProvider =
     FutureProvider.family<RouteWeatherLoaded?, String>((ref, routeId) async {
   try {

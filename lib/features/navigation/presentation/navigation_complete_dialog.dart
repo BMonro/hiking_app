@@ -4,9 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/validation/form_validators.dart';
 import '../../../core/widgets/app_text_form_field.dart';
+import '../domain/hike_qualification.dart';
 import '../domain/hike_session_summary.dart';
 
-/// Діалог завершення походу та форма збереження в журнал.
 Future<void> showHikeCompletionFlow(
   BuildContext context,
   HikeSessionSummary summary,
@@ -182,6 +182,27 @@ Future<void> _showJournalSaveSheet(
                 ),
                 onPressed: () async {
                   if (!(formKey.currentState?.validate() ?? false)) return;
+
+                  final distanceKm =
+                      double.tryParse(distanceController.text) ?? 0;
+                  final durationHours =
+                      double.tryParse(durationController.text) ?? 0;
+                  if (!HikeQualification.qualifies(
+                    distanceKm: distanceKm,
+                    durationHours: durationHours,
+                    reachedFinish: summary.reachedFinish,
+                  )) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Занадто мало для походу: '
+                          '${HikeQualification.requirementHint}.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+
                   try {
                     final userId =
                         Supabase.instance.client.auth.currentUser!.id;

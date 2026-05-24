@@ -17,11 +17,9 @@ final unreadNotificationsCountProvider = FutureProvider<int>((ref) async {
   return ref.read(notificationsRepositoryProvider).unreadCount();
 });
 
-/// Останнє сповіщення для SnackBar (після фільтра налаштувань).
 final pendingInAppNotificationProvider =
     StateProvider<Map<String, dynamic>?>((ref) => null);
 
-/// Realtime + інвалідація списку; trip-події також оновлюють походи.
 final notificationsRealtimeProvider = Provider<void>((ref) {
   final client = Supabase.instance.client;
   final uid = client.auth.currentUser?.id;

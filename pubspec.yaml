@@ -9,36 +9,27 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
-  # навігація між екранами
+
   go_router: ^14.0.0
-  
-  # управління станом
+
   flutter_riverpod: ^2.5.1
   riverpod_annotation: ^2.3.5
-  
-  # карта
+
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
-  
-  # геолокація
+
   geolocator: ^13.0.0
-  
-  # supabase
+
   supabase_flutter: ^2.5.0
   app_links: ^7.0.0
-  
-  # http запити
+
   dio: ^5.4.3
-  
-  # локальне сховище
+
   hive_flutter: ^1.1.0
   path_provider: ^2.1.5
-  
-  # вибір фото
+
   image_picker: ^1.1.2
-  
-  # іконки
+
   cupertino_icons: ^1.0.8
   fl_chart: ^1.2.0
 

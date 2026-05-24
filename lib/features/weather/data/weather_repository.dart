@@ -107,8 +107,6 @@ class WeatherRepository {
     }).toList();
   }
 
-  // --- Локальний fallback ---
-
   Future<WeatherModel> _getWeatherByCityLocal(String city) async {
     final response = await _dio.get(
       '${WeatherConfig.baseUrl}/weather',

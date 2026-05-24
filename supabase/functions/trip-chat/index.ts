@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy trip-chat
-// body: { action: 'list' | 'send', trip_id, content? }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { createServiceClient } from "../_shared/auth.ts";
@@ -45,10 +44,63 @@ async function enrichMessages(
     }
   }
 
-  return rows.map((r) => ({
+  const enriched = rows.map((r) => ({
     ...r,
     _sender_label: nameById.get(r.sender_id as string) ?? "Учасник",
   }));
+
+  attachReplyPreviews(enriched);
+  return enriched;
+}
+
+function attachReplyPreviews(rows: Record<string, unknown>[]): void {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const id = r.id as string | undefined;
+    if (id) byId.set(id, r);
+  }
+  for (const r of rows) {
+    const replyId = r.reply_to_id as string | undefined;
+    if (!replyId) continue;
+    const parent = byId.get(replyId);
+    if (parent) {
+      r._reply_sender_label = parent._sender_label ?? "Учасник";
+      r._reply_content = parent.content;
+    } else {
+      r._reply_sender_label = null;
+      r._reply_content = null;
+    }
+  }
+}
+
+async function attachReplyPreviewForMessage(
+  supabase: ReturnType<typeof createClient>,
+  tripId: string,
+  message: Record<string, unknown>,
+): Promise<void> {
+  const replyId = message.reply_to_id as string | undefined;
+  if (!replyId) return;
+
+  const { data: parent } = await supabase
+    .from("messages")
+    .select("id, content, sender_id")
+    .eq("id", replyId)
+    .eq("trip_id", tripId)
+    .maybeSingle();
+  if (!parent) {
+    message._reply_sender_label = null;
+    message._reply_content = null;
+    return;
+  }
+
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", parent.sender_id as string)
+    .maybeSingle();
+  const name = (prof?.full_name as string)?.trim();
+  message._reply_sender_label = name && name.length > 0 ? name : "Учасник";
+  message._reply_content = parent.content;
 }
 
 async function notifyTripMembers(
@@ -125,7 +177,12 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
-  let body: { action?: Action; trip_id?: string; content?: string };
+  let body: {
+    action?: Action;
+    trip_id?: string;
+    content?: string;
+    reply_to_id?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -147,7 +204,7 @@ Deno.serve(async (req) => {
     if (action === "list") {
       const { data: rows, error } = await supabase
         .from("messages")
-        .select("id, trip_id, sender_id, content, sent_at")
+        .select("id, trip_id, sender_id, content, sent_at, reply_to_id")
         .eq("trip_id", tripId)
         .order("sent_at", { ascending: true });
       if (error) throw error;
@@ -168,14 +225,31 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: "content_too_long" }, 400);
       }
 
+      const replyToId = body.reply_to_id?.trim() || null;
+      if (replyToId) {
+        const { data: parentMsg, error: parentErr } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("id", replyToId)
+          .eq("trip_id", tripId)
+          .maybeSingle();
+        if (parentErr) throw parentErr;
+        if (!parentMsg) {
+          return jsonResponse({ error: "reply_not_found" }, 400);
+        }
+      }
+
+      const insertRow: Record<string, unknown> = {
+        trip_id: tripId,
+        sender_id: user.id,
+        content,
+      };
+      if (replyToId) insertRow.reply_to_id = replyToId;
+
       const { data: inserted, error: insErr } = await supabase
         .from("messages")
-        .insert({
-          trip_id: tripId,
-          sender_id: user.id,
-          content,
-        })
-        .select("id, trip_id, sender_id, content, sent_at")
+        .insert(insertRow)
+        .select("id, trip_id, sender_id, content, sent_at, reply_to_id")
         .single();
       if (insErr) throw insErr;
 
@@ -207,6 +281,7 @@ Deno.serve(async (req) => {
         supabase,
         [inserted as Record<string, unknown>],
       );
+      await attachReplyPreviewForMessage(supabase, tripId, message);
       return jsonResponse({ ok: true, message });
     }
 

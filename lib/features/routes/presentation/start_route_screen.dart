@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../../core/map/map_overlay_controls.dart';
+import '../../../core/map/map_tile_style.dart';
 import 'routes_provider.dart';
 import '../domain/route_model.dart';
 
@@ -20,6 +23,7 @@ class StartRouteScreen extends ConsumerStatefulWidget {
 
 class _StartRouteScreenState extends ConsumerState<StartRouteScreen> {
   late MapController _mapController;
+  MapTileStyle _mapTileStyle = MapTileStyle.standard;
   bool _isNavigating = false;
   double _currentDistance = 0;
   double _remainingDistance = 0;
@@ -78,25 +82,33 @@ class _StartRouteScreenState extends ConsumerState<StartRouteScreen> {
 
           return Stack(
             children: [
-              // Map
+
               FlutterMap(
                 mapController: _mapController,
                 options: MapOptions(
-                  initialCenter: const LatLng(50.4501, 30.5234), // Kyiv
+                  initialCenter: const LatLng(50.4501, 30.5234),
                   initialZoom: 13,
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.app',
+                    urlTemplate: _mapTileStyle.urlTemplate,
+                    userAgentPackageName: 'com.example.hiking_app',
+                    maxZoom: onlineMapTileMaxZoom(_mapTileStyle),
                   ),
-                  // Route polyline layer would be added here
-                  // with the actual route coordinates
+                  if (_mapTileStyle == MapTileStyle.terrain)
+                    const SimpleAttributionWidget(
+                      source: Text(openTopoMapAttribution),
+                      alignment: Alignment.bottomLeft,
+                    ),
                 ],
               ),
+              MapControlsOverlay(
+                mapController: _mapController,
+                style: _mapTileStyle,
+                onToggleStyle: () =>
+                    setState(() => _mapTileStyle = _mapTileStyle.toggled),
+              ),
 
-              // Bottom navigation panel
               Positioned(
                 bottom: 0,
                 left: 0,
@@ -194,7 +206,7 @@ class _NavigationPanelState extends State<_NavigationPanel>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header with expand button
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
@@ -233,7 +245,6 @@ class _NavigationPanelState extends State<_NavigationPanel>
             ),
           ),
 
-          // Expanded content
           SizeTransition(
             sizeFactor: Tween<double>(begin: 0, end: 1).animate(
               CurvedAnimation(parent: _expandController, curve: Curves.easeOut),
@@ -243,7 +254,7 @@ class _NavigationPanelState extends State<_NavigationPanel>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Progress bar
+
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -285,7 +296,6 @@ class _NavigationPanelState extends State<_NavigationPanel>
 
                   const SizedBox(height: 16),
 
-                  // Statistics
                   Row(
                     children: [
                       _StatItem(
@@ -312,7 +322,6 @@ class _NavigationPanelState extends State<_NavigationPanel>
 
                   const SizedBox(height: 16),
 
-                  // Action buttons
                   Row(
                     children: [
                       Expanded(

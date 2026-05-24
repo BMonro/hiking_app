@@ -5,7 +5,6 @@ import '../../../core/api/backend_api.dart';
 import '../../../core/config/overpass_config.dart';
 import '../domain/map_poi.dart';
 
-/// POI з Overpass через Edge Function `poi-nearby` (локальний fallback).
 class OverpassPoiRepository {
   OverpassPoiRepository({Dio? dio, BackendApi? api})
       : _dio = dio ?? Dio(),

@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy weather
-// body: { action: current|forecast|route|city, lat?, lon?, city?, route_id? }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";

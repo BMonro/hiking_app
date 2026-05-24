@@ -9,14 +9,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../routes/data/osm_nominatim_service.dart';
 import '../../domain/place_suggestion.dart';
 
-/// Стиль як у екрана погоди: біле поле, округлення 14.
 class _WeatherSearchStyle {
   static const surface = Colors.white;
   static const primary = Color(0xFF2E7D32);
   static const border = Color(0xFFE3E7E2);
 }
 
-/// Пошук місця для погоди: кеш, debounce, спочатку каталог, потім OSM (Україна).
 class OsmWeatherSearchField extends StatefulWidget {
   final TextEditingController controller;
   final ValueChanged<PlaceSuggestion> onPick;
@@ -250,7 +248,7 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
             .catchError((_) => const <_Hit>[]),
       ]).timeout(const Duration(seconds: 8));
     } on TimeoutException {
-      // Показуємо те, що встигло завантажитись.
+
     }
 
     if (!mounted || gen != _requestGen || _hideSuggestionsUntilEdit) return;
@@ -262,7 +260,6 @@ class _OsmWeatherSearchFieldState extends State<OsmWeatherSearchField> {
       _loadingPeaks = true;
     });
 
-    // Вершини та рідкісні назви — догружаємо без блокування першого екрану.
     try {
       final peaks = await _osm
           .searchForWeatherPeaks(q, cancelToken: token)

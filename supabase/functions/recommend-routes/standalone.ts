@@ -1,5 +1,4 @@
-// Dashboard: Create function → recommend-routes → вставити цей файл → Deploy.
-// Секрет OPENAI_API_KEY — той самий, що для ai-chat.
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 

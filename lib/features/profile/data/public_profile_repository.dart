@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Публічні поля профілю для прев’ю в групових походах.
 class PublicProfile {
   final String id;
   final String displayName;
@@ -10,6 +9,7 @@ class PublicProfile {
   final String? fitnessLevel;
   final int experienceCount;
   final String? bio;
+  final String? phoneNumber;
 
   const PublicProfile({
     required this.id,
@@ -19,10 +19,12 @@ class PublicProfile {
     this.fitnessLevel,
     this.experienceCount = 0,
     this.bio,
+    this.phoneNumber,
   });
 
   factory PublicProfile.fromJson(Map<String, dynamic> json) {
     final name = (json['full_name'] as String?)?.trim();
+    final phone = (json['phone_number'] as String?)?.trim();
     return PublicProfile(
       id: json['id']?.toString() ?? '',
       displayName: name != null && name.isNotEmpty ? name : 'Учасник',
@@ -31,6 +33,7 @@ class PublicProfile {
       fitnessLevel: json['fitness_level'] as String?,
       experienceCount: (json['experience_count'] as num?)?.toInt() ?? 0,
       bio: (json['bio'] as String?)?.trim(),
+      phoneNumber: phone != null && phone.isNotEmpty ? phone : null,
     );
   }
 }
@@ -42,12 +45,12 @@ class PublicProfileRepository {
   final SupabaseClient _client;
 
   static const _selectFields =
-      'id, full_name, avatar_url, age, fitness_level, experience_count, bio';
+      'id, full_name, avatar_url, age, fitness_level, experience_count, bio, phone_number';
 
   Future<PublicProfile?> fetchById(String userId) async {
     if (userId.isEmpty) return null;
     final row = await _client
-        .from('profiles')
+        .from('profiles_public')
         .select(_selectFields)
         .eq('id', userId)
         .maybeSingle();
@@ -58,7 +61,8 @@ class PublicProfileRepository {
   Future<Map<String, PublicProfile>> fetchByIds(Iterable<String> userIds) async {
     final ids = userIds.where((id) => id.isNotEmpty).toSet().toList();
     if (ids.isEmpty) return {};
-    final rows = await _client.from('profiles').select(_selectFields).inFilter('id', ids);
+    final rows =
+        await _client.from('profiles_public').select(_selectFields).inFilter('id', ids);
     final map = <String, PublicProfile>{};
     for (final row in List<Map<String, dynamic>>.from(rows)) {
       final p = PublicProfile.fromJson(row);

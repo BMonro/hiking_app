@@ -1,4 +1,4 @@
-/// Обране місце для прогнозу погоди (координати або лише назва для геокодування).
+
 class PlaceSuggestion {
   final String label;
   final double? lat;

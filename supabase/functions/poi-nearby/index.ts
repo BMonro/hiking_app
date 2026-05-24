@@ -1,5 +1,4 @@
-// deploy: npx supabase functions deploy poi-nearby
-// body: { south, west, north, east }
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";

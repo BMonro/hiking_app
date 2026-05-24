@@ -16,8 +16,7 @@ void main() {
       await Hive.initFlutter();
 
       try {
-        // PKCE: Google OAuth і підтвердження email на цьому телефоні (deep link ?code=).
-        // Implicit на Android часто губить #access_token у intent — вхід не завершується.
+
         await Supabase.initialize(
           url: SupabaseConfig.url,
           anonKey: SupabaseConfig.anonKey,

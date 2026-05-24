@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/notifications/notification_preferences_provider.dart';
+import 'profile_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -21,6 +22,66 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _autoSOS = true;
   bool _publicProfile = true;
   bool _showEmail = false;
+  bool _showPhone = false;
+  bool _privacyLoading = true;
+  bool _privacySaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrivacySettings();
+  }
+
+  Future<void> _loadPrivacySettings() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      if (mounted) setState(() => _privacyLoading = false);
+      return;
+    }
+    try {
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select('phone_visible')
+          .eq('id', userId)
+          .maybeSingle();
+      if (mounted) {
+        setState(() {
+          _showPhone = data?['phone_visible'] as bool? ?? false;
+          _privacyLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _privacyLoading = false);
+    }
+  }
+
+  Future<void> _savePrivacySettings() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    setState(() => _privacySaving = true);
+    try {
+      await Supabase.instance.client.from('profiles').update({
+        'phone_visible': _showPhone,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', userId);
+      ref.invalidate(profileProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Налаштування приватності збережено'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Помилка збереження: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _privacySaving = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -216,21 +277,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       setState(() => _showEmail = v);
                     },
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Показувати номер телефону'),
+                    subtitle: const Text(
+                      'Інші користувачі бачать телефон у прев’ю профілю',
+                    ),
+                    value: _showPhone,
+                    onChanged: _privacyLoading
+                        ? null
+                        : (v) {
+                            setSheetState(() => _showPhone = v);
+                            setState(() => _showPhone = v);
+                          },
+                  ),
                   const SizedBox(height: 12),
                   FilledButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(this.context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Налаштування приватності збережено'),
-                        ),
-                      );
-                    },
+                    onPressed: _privacySaving
+                        ? null
+                        : () async {
+                            await _savePrivacySettings();
+                            if (context.mounted) Navigator.pop(context);
+                          },
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF2E7D32),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: const Text('Готово'),
+                    child: _privacySaving
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Готово'),
                   ),
                 ],
               ),

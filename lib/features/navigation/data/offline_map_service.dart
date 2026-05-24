@@ -22,7 +22,6 @@ class OfflineMapDownloadProgress {
   double get fraction => total == 0 ? 0 : completed / total;
 }
 
-/// Завантаження та зберігання офлайн-пакета: **тайли карти** + **лінія шляху** (`route_path.json`).
 class OfflineMapService {
   static const String osmTileUrlTemplate =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -75,7 +74,6 @@ class OfflineMapService {
     return File('${dir.path}/route_detail.json');
   }
 
-  /// Збережена лінія маршруту для офлайн-навігації.
   Future<OfflineRoutePath?> loadOfflinePath(String routeId) async {
     await _migrateLegacyDetailIfNeeded(routeId);
     final file = await _pathFile(routeId);
@@ -100,7 +98,6 @@ class OfflineMapService {
         '${(await getApplicationDocumentsDirectory()).path}/offline_tiles';
   }
 
-  /// Карта завантажена повністю (є маркер завершення).
   Future<bool> hasOfflineMap(String routeId) async {
     return (await _completeMarker(routeId)).existsSync();
   }
@@ -155,7 +152,6 @@ class OfflineMapService {
     );
   }
 
-  /// Розмір **тайлів** у МБ (без службових json).
   Future<double> cacheSizeMb(String routeId) async {
     final dir = await _routeDir(routeId);
     if (!await dir.exists()) return 0;
@@ -168,7 +164,6 @@ class OfflineMapService {
     return bytes / (1024 * 1024);
   }
 
-  /// [pathPolyline] — лінія шляху на карті; [detail] — для bbox тайлів і назви.
   Stream<OfflineMapDownloadProgress> downloadRouteMap(
     RouteDetail detail, {
     required List<LatLng> pathPolyline,
@@ -219,7 +214,7 @@ class OfflineMapService {
               await file.writeAsBytes(bytes, flush: true);
             }
           } on DioException {
-            // Пропускаємо невдалі тайли.
+
           }
           completed++;
         }),

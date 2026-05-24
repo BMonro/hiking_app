@@ -1,4 +1,4 @@
-/** POI з Overpass для шару карти. */
+
 
 export type MapPoiDto = {
   lat: number;

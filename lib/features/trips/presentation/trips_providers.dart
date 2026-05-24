@@ -1,12 +1,22 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../routes/domain/route_model.dart';
 import '../data/trip_chat_api.dart';
 import '../data/trip_messages_repository.dart';
 
+bool tripVisibleToUser(Map<String, dynamic> trip, String? userId) {
+  final status = trip['status']?.toString();
+  if (status != 'cancelled') return true;
+  if (userId == null) return false;
+  return trip['organizer_id']?.toString() == userId;
+}
+
 final groupHikesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   ref.keepAlive();
-  final data = await Supabase.instance.client
+  final client = Supabase.instance.client;
+  final uid = client.auth.currentUser?.id;
+  final data = await client
       .from('trips')
       .select('''
 id, title, description, status, start_date, end_date, meeting_point,
@@ -15,15 +25,121 @@ routes(id, title, difficulty, distance_km, route_type),
 trip_participants(user_id, status)
 ''')
       .order('created_at', ascending: false);
-  return List<Map<String, dynamic>>.from(data);
+  return List<Map<String, dynamic>>.from(data)
+      .where((trip) => tripVisibleToUser(trip, uid))
+      .toList();
 });
 
-final groupHikeFilterProvider = StateProvider<String>((ref) => 'all');
 final groupHikeSearchProvider = StateProvider<String>((ref) => '');
+
+final tripScopeFilterProvider = StateProvider<String>((ref) => 'all');
+
+final tripDifficultyFilterProvider = StateProvider<String>((ref) => 'all');
+
+final tripRouteTypeFilterProvider = StateProvider<String>((ref) => 'all');
+
+final tripSortProvider = StateProvider<String>((ref) => 'newest');
+
+int activeTripFiltersCount({
+  required String scope,
+  required String difficulty,
+  required String routeType,
+  required String sort,
+}) {
+  var n = 0;
+  if (scope != 'all') n++;
+  if (difficulty != 'all') n++;
+  if (routeType != 'all') n++;
+  if (sort != 'newest') n++;
+  return n;
+}
+
+List<Map<String, dynamic>> filterAndSortGroupTrips({
+  required List<Map<String, dynamic>> trips,
+  required String userId,
+  required String search,
+  required String scope,
+  required String difficulty,
+  required String routeType,
+  required String sort,
+}) {
+  final q = search.trim().toLowerCase();
+
+  final filtered = trips.where((trip) {
+    final route = trip['routes'] as Map<String, dynamic>?;
+    final title = (trip['title'] ?? '').toString().toLowerCase();
+    final code = (trip['trip_code'] ?? '').toString().toLowerCase();
+    final id = (trip['id'] ?? '').toString().toLowerCase();
+    final status = (trip['status'] ?? 'open').toString();
+    final isMine = trip['organizer_id']?.toString() == userId;
+    final routeDifficulty = route?['difficulty']?.toString() ?? '';
+    final storedRouteType =
+        RouteModel.normalizeStoredRouteType(route?['route_type']);
+
+    if (q.isNotEmpty &&
+        !title.contains(q) &&
+        !code.contains(q) &&
+        !id.contains(q)) {
+      return false;
+    }
+
+    if (scope == 'mine' && !isMine) return false;
+    if (scope == 'open' && status != 'open') return false;
+
+    if (difficulty != 'all' && routeDifficulty != difficulty) return false;
+
+    if (routeType != 'all' && storedRouteType != routeType) return false;
+
+    return true;
+  }).toList();
+
+  filtered.sort((a, b) {
+    switch (sort) {
+      case 'start_asc':
+        final da = _tripStartDate(a);
+        final db = _tripStartDate(b);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da.compareTo(db);
+      case 'start_desc':
+        final da = _tripStartDate(a);
+        final db = _tripStartDate(b);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return db.compareTo(da);
+      case 'newest':
+      default:
+        final ca = _tripCreatedAt(a);
+        final cb = _tripCreatedAt(b);
+        if (ca == null && cb == null) return 0;
+        if (ca == null) return 1;
+        if (cb == null) return -1;
+        return cb.compareTo(ca);
+    }
+  });
+
+  return filtered;
+}
+
+DateTime? _tripStartDate(Map<String, dynamic> trip) {
+  final raw = trip['start_date']?.toString();
+  if (raw == null || raw.isEmpty) return null;
+  return DateTime.tryParse(raw);
+}
+
+DateTime? _tripCreatedAt(Map<String, dynamic> trip) {
+  final raw = trip['created_at']?.toString();
+  if (raw == null || raw.isEmpty) return null;
+  return DateTime.tryParse(raw);
+}
 
 final tripDetailProvider =
     FutureProvider.family<Map<String, dynamic>?, String>((ref, tripId) async {
-  final row = await Supabase.instance.client
+  final client = Supabase.instance.client;
+  final uid = client.auth.currentUser?.id;
+  final row = await client
       .from('trips')
       .select(
         'id, title, description, start_date, end_date, meeting_point, '
@@ -33,6 +149,7 @@ final tripDetailProvider =
       .eq('id', tripId)
       .maybeSingle();
   if (row == null) return null;
+  if (!tripVisibleToUser(row, uid)) return null;
   final orgId = row['organizer_id']?.toString();
   if (orgId != null) {
     final prof = await Supabase.instance.client
@@ -54,7 +171,6 @@ final tripDetailProvider =
   row['_approved_count'] = list.where((p) => p['status'] == 'approved').length;
   row['_pending_count'] = list.where((p) => p['status'] == 'pending').length;
 
-  final uid = Supabase.instance.client.auth.currentUser?.id;
   final status = row['status']?.toString();
   if (uid != null && status != 'cancelled') {
     if (row['organizer_id']?.toString() == uid) {
@@ -85,7 +201,6 @@ final pendingTripRequestsProvider =
   return List<Map<String, dynamic>>.from(pending);
 });
 
-/// Підписка Realtime: оновлення списку походів, деталей, заявок і сповіщень.
 final tripsRealtimeSyncProvider = Provider<void>((ref) {
   final client = Supabase.instance.client;
   final uid = client.auth.currentUser?.id;
@@ -169,17 +284,26 @@ class TripMessagesNotifier
     final current = state.valueOrNull ?? [];
     if (id != null && current.any((m) => m['id']?.toString() == id)) return;
     final enriched = await enrichTripMessageRow(row);
-    state = AsyncData([...current, enriched]);
+    final updated = [...current, enriched];
+    attachReplyPreviews(updated);
+    state = AsyncData(updated);
   }
 
-  Future<void> send(String tripId, String content) async {
+  Future<void> send(
+    String tripId,
+    String content, {
+    String? replyToId,
+  }) async {
     final enriched = await _chatApi.sendMessage(
       tripId: tripId,
       content: content,
+      replyToId: replyToId,
     );
     final id = enriched['id']?.toString();
     final current = state.valueOrNull ?? [];
     if (id != null && current.any((m) => m['id']?.toString() == id)) return;
-    state = AsyncData([...current, enriched]);
+    final updated = [...current, enriched];
+    attachReplyPreviews(updated);
+    state = AsyncData(updated);
   }
 }

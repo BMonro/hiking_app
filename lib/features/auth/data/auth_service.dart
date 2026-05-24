@@ -3,7 +3,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/auth_config.dart';
 
-/// Автентифікація: email, Google OAuth, підтвердження пошти.
 class AuthService {
   AuthService({SupabaseClient? client})
       : _client = client ?? Supabase.instance.client;
@@ -48,7 +47,7 @@ class AuthService {
       OAuthProvider.google,
       redirectTo: redirectTo,
       authScreenLaunchMode: LaunchMode.externalApplication,
-      // Завжди показувати вибір Google-акаунта, а не «тихий» вхід останнім.
+
       queryParams: const {'prompt': 'select_account'},
     );
   }

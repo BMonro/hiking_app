@@ -34,7 +34,6 @@ void _resetProfileCheckCache() {
   _profilePhysicalComplete = false;
 }
 
-/// Чи потрібен крок 2 реєстрації (вік, фото, інтереси) після OAuth / email.
 Future<bool> _needsPhysicalProfile(String userId) async {
   if (_profileCheckedUserId == userId && _profilePhysicalComplete) {
     return false;
@@ -62,12 +61,11 @@ Future<bool> _needsPhysicalProfile(String userId) async {
     if (_profileCheckedUserId == userId) {
       return !_profilePhysicalComplete;
     }
-    // Без даних з БД — показуємо онбординг (не пускаємо в /home як «вхід»).
+
     return true;
   }
 }
 
-/// Notifies [GoRouter] when Supabase auth session changes (e.g. OAuth deep link).
 class AuthSessionRefreshNotifier extends ChangeNotifier {
   AuthSessionRefreshNotifier() {
     _subscription =

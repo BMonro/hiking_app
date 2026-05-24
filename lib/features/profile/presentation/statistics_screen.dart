@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Агрегат за весь час (VIEW profile_stats).
 final profileStatsAllTimeProvider = FutureProvider<Map<String, dynamic>?>((ref) async {
   final client = Supabase.instance.client;
   final userId = client.auth.currentUser?.id;
@@ -21,7 +20,6 @@ final profileStatsAllTimeProvider = FutureProvider<Map<String, dynamic>?>((ref) 
   return Map<String, dynamic>.from(row as Map);
 });
 
-/// Журнал за рік (графіки, рекорди за місяць).
 final journalEntriesForYearProvider =
     FutureProvider.family<List<Map<String, dynamic>>, int>((ref, year) async {
   final client = Supabase.instance.client;

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Точка інтересу з OpenStreetMap (Overpass).
 enum MapPoiKind {
   peak,
   water,
@@ -20,7 +19,7 @@ class MapPoi {
   final double lon;
   final String? name;
   final MapPoiKind kind;
-  /// Висота над рівнем моря (м), з тега `ele` у OSM, якщо є.
+
   final int? elevationM;
 
   const MapPoi({
@@ -31,7 +30,6 @@ class MapPoi {
     this.elevationM,
   });
 
-  /// Парсить тег `ele` (метри), напр. "1234" або "1234 m".
   static int? elevationMFromTags(Map<String, String> tags) {
     final raw = tags['ele']?.trim();
     if (raw == null || raw.isEmpty) return null;
@@ -85,7 +83,6 @@ class MapPoi {
     return MapPoiKind.other;
   }
 
-  /// Типи `historic=*`, які показуємо як туристичні пам’ятки.
   static const Set<String> _historicKinds = {
     'castle',
     'ruins',

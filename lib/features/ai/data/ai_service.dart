@@ -5,7 +5,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../domain/chat_message.dart';
 
-/// ШІ та рекомендації маршрутів через Supabase Edge Functions.
 class AiService {
   AiService();
 
@@ -13,7 +12,6 @@ class AiService {
 
   bool? _availableCache;
 
-  /// Скидає кеш після деплою Edge Function або додавання OPENAI_API_KEY.
   void clearAvailabilityCache() => _availableCache = null;
 
   static const _pingTimeout = Duration(seconds: 5);

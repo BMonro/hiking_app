@@ -223,7 +223,7 @@ class TripsApi {
       'title_required' => 'Введіть назву походу',
       'trip_not_editable' => 'Похід більше не редагується',
       'action_and_trip_id_required' =>
-        'Оновіть Edge Function trip-actions на сервері (див. DEPLOY_EDGE_FUNCTIONS_UA.txt)',
+        'Оновіть Edge Function trip-actions на сервері (supabase functions deploy).',
       _ => data?['message']?.toString() ??
           'Помилка операції з походом (HTTP $status)',
     };

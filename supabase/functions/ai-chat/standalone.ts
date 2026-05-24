@@ -1,6 +1,4 @@
-// Варіант для Supabase Dashboard (один файл, без _shared).
-// Edge Functions → Create function → імʼя: ai-chat → вставте цей код → Deploy.
-// Секрет: OPENAI_API_KEY у Project Settings → Edge Functions → Secrets.
+
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 

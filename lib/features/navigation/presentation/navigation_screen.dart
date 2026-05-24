@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../../core/map/map_overlay_controls.dart';
+import '../../../core/map/map_tile_style.dart';
 import '../../../core/network/network_status_provider.dart';
 import '../../routes/domain/route_detail.dart';
 import '../../routes/presentation/routes_provider.dart';
@@ -16,6 +19,7 @@ import '../data/offline_tile_provider.dart';
 import '../domain/offline_route_path.dart';
 import '../data/overpass_poi_repository.dart';
 import '../data/routing_repository.dart';
+import '../domain/hike_qualification.dart';
 import '../domain/hike_session_summary.dart';
 import '../domain/map_poi.dart';
 import 'navigation_complete_dialog.dart';
@@ -37,18 +41,38 @@ final locationProvider = StreamProvider<Position?>((ref) async* {
   }
 
   yield* Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
-    ),
+    locationSettings: _navigationLocationSettings(),
   );
 });
 
+LocationSettings _navigationLocationSettings() {
+  const filter = 4;
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.android:
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: filter,
+        intervalDuration: const Duration(seconds: 2),
+      );
+    case TargetPlatform.iOS:
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: filter,
+        activityType: ActivityType.fitness,
+        pauseLocationUpdatesAutomatically: false,
+      );
+    default:
+      return LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: filter,
+      );
+  }
+}
+
 class NavigationScreen extends ConsumerStatefulWidget {
-  /// Якщо задано — підвантажити збережений маршрут з БД і показати на карті.
+
   final String? routeIdToFollow;
 
-  /// Лише з вкладки «Офлайн» — навігація без мережі (окремий режим).
   final bool forceOfflineNavigation;
 
   const NavigationScreen({
@@ -72,15 +96,16 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   bool _poiLoading = false;
   List<MapPoi> _pois = [];
 
+  MapTileStyle _mapTileStyle = MapTileStyle.standard;
+
   List<LatLng>? _routePoints;
-  /// Ключові точки для перебудови (старт/фініш/проміжні з БД).
+
   List<LatLng>? _navWaypoints;
   bool _routeLoading = false;
   bool _pickStartOnMap = false;
   LatLng? _routeDestination;
   LatLng? _pickedRouteStart;
 
-  /// Рух уздовж побудованого маршруту (карта слідує за GPS).
   bool _routeNavActive = false;
   int _routeProgressIndex = 0;
 
@@ -95,7 +120,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
   OfflineTileProvider? _offlineTileProvider;
 
-  /// Навігація лише з локального пакета (без Supabase, маршрутизації, POI, OSM).
   bool _offlineOnlyNav = false;
   String? _offlineRouteTitle;
 
@@ -103,18 +127,37 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   static const double _offRouteThresholdM = 45;
   static const double _offRouteRerouteImmediatelyM = 75;
   static const Duration _rerouteCooldown = Duration(seconds: 25);
-  static const double _minTraveledMForSummary = 200;
-  static const Duration _minSessionForSummary = Duration(minutes: 1);
+
+  static const double _minGpsMoveForProgressM = 5;
+
+  static const double _minAlongRouteAdvanceM = 4;
+
+  static const double _maxGpsJumpM = 120;
+
+  static const Duration _stationaryGap = Duration(seconds: 90);
 
   static const double _navFollowZoom = 17;
 
-  /// Офлайн-пакет містить тайли лише до [OfflineMapService.maxZoom].
+  double _progressAlongRouteM = 0;
+
+  double _liveAlongRouteM = 0;
+  int _liveRouteSegmentIndex = 0;
+
+  double _sessionGpsOdometerM = 0;
+
+  LatLng? _lastAcceptedGpsForProgress;
+  LatLng? _lastOdometerGpsPosition;
+
+  Duration _movingDuration = Duration.zero;
+  DateTime? _movingSegmentStart;
+  DateTime? _lastMovementAt;
+  bool _gpsQualityWarned = false;
+
   double get _followZoom =>
       _offlineOnlyNav
           ? OfflineMapService.maxZoom.toDouble()
           : _navFollowZoom;
 
-  /// Центр камери: офлайн-тайли лише вздовж маршруту (GPS емулятора часто «в іншій країні»).
   LatLng _mapCenterForFollow(LatLng user, List<LatLng> route, int progressIdx) {
     if (!_offlineOnlyNav) return user;
     final idx = progressIdx.clamp(0, route.length - 1);
@@ -140,7 +183,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
-  // Карпати — початкова позиція карти
   static const LatLng _defaultCenter = LatLng(48.1588, 24.4671);
 
   @override
@@ -158,7 +200,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
-  /// Навігація по маршруту з БД; без мережі — локальний офлайн-пакет.
   Future<void> _loadRouteFromDatabase(String routeId) async {
     setState(() => _routeLoading = true);
     try {
@@ -202,7 +243,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
       List<LatLng>? pts;
 
-      // Спочатку будуємо шлях по OSM-стежках (важливіше за збережений geojson з прямими).
       if (waypointPositions.length >= 2) {
         try {
           pts = await _routingRepo.fetchHikingRouteThrough(waypointPositions);
@@ -255,7 +295,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
-  /// Офлайн-навігація з локального пакета (вкладка «Офлайн» у «Мої маршрути»).
   Future<void> _loadOfflineRoutePackage(String routeId) async {
     setState(() => _routeLoading = true);
     try {
@@ -355,7 +394,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       offlineMapService: offlineService,
       offlineOnly: offlineOnly,
     );
-    setState(() {});
+    setState(() => _mapTileStyle = MapTileStyle.standard);
   }
 
   @override
@@ -390,6 +429,257 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     _navSessionStartedAt = null;
     _navSessionTotalMeters = null;
     _completionHandled = false;
+    _progressAlongRouteM = 0;
+    _liveAlongRouteM = 0;
+    _liveRouteSegmentIndex = 0;
+    _sessionGpsOdometerM = 0;
+    _lastAcceptedGpsForProgress = null;
+    _lastOdometerGpsPosition = null;
+    _movingDuration = Duration.zero;
+    _movingSegmentStart = null;
+    _lastMovementAt = null;
+    _gpsQualityWarned = false;
+  }
+
+  double _minMoveForPosition(Position pos) {
+    if (!pos.accuracy.isFinite || pos.accuracy <= 0) {
+      return _minGpsMoveForProgressM;
+    }
+    if (pos.accuracy <= 15) return 5;
+    if (pos.accuracy <= 25) return 7;
+    return math.max(_minGpsMoveForProgressM, pos.accuracy * 0.9);
+  }
+
+  double _minAlongRouteAdvanceFor(Position pos) {
+    if (pos.accuracy.isFinite && pos.accuracy <= 18) return 2;
+    if (pos.accuracy.isFinite && pos.accuracy <= 30) return 3;
+    return _minAlongRouteAdvanceM;
+  }
+
+  bool _isDeviceLikelyMoving(Position pos) {
+
+    if (pos.speed >= 0 && pos.speed < 0.5) return false;
+    return true;
+  }
+
+  void _flushMovingDuration() {
+    if (_movingSegmentStart == null || _lastMovementAt == null) return;
+    _movingDuration += _lastMovementAt!.difference(_movingSegmentStart!);
+    _movingSegmentStart = null;
+  }
+
+  void _registerGpsMovement() {
+    final now = DateTime.now();
+    if (_movingSegmentStart == null) {
+      _movingSegmentStart = now;
+    } else if (_lastMovementAt != null &&
+        now.difference(_lastMovementAt!) > _stationaryGap) {
+      _movingDuration += _lastMovementAt!.difference(_movingSegmentStart!);
+      _movingSegmentStart = now;
+    }
+    _lastMovementAt = now;
+  }
+
+  bool _isGpsReadingReliable(Position pos, double segmentM) {
+    if (!_isDeviceLikelyMoving(pos)) return false;
+    if (!pos.accuracy.isFinite || pos.accuracy <= 0) return true;
+    if (pos.accuracy > 20 && segmentM < pos.accuracy * 0.85) return false;
+    return pos.accuracy <= math.max(segmentM * 2.5, 15);
+  }
+
+  void _maybeWarnPoorGps(Position pos) {
+    if (_gpsQualityWarned || !pos.accuracy.isFinite || pos.accuracy <= 25) {
+      return;
+    }
+    _gpsQualityWarned = true;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Неточний GPS (±${pos.accuracy.round()} м). '
+          'На емуляторі відстань і час можуть «плисти» без руху — '
+          'перевірте на реальному телефоні.',
+        ),
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
+  void _updateGpsOdometer(LatLng user, Position pos) {
+    final last = _lastOdometerGpsPosition;
+    if (last == null) {
+      _lastOdometerGpsPosition = user;
+      return;
+    }
+    final dist = const Distance();
+    final d = dist.as(LengthUnit.Meter, last, user);
+    final minMove = _minMoveForPosition(pos);
+    if (d < minMove || d > _maxGpsJumpM) return;
+    if (!_isGpsReadingReliable(pos, d)) return;
+    _sessionGpsOdometerM += d;
+    _lastOdometerGpsPosition = user;
+    _registerGpsMovement();
+  }
+
+  ({LatLng point, double t, double distM}) _closestPointOnSegment(
+    LatLng p,
+    LatLng a,
+    LatLng b,
+  ) {
+    final dist = const Distance();
+    final total = dist.as(LengthUnit.Meter, a, b);
+    if (total < 1) {
+      return (point: a, t: 0, distM: dist.as(LengthUnit.Meter, p, a));
+    }
+
+    const latScale = 111320.0;
+    final lonScale =
+        111320.0 * math.cos((a.latitude + b.latitude) * math.pi / 360);
+
+    final ax = a.longitude * lonScale;
+    final ay = a.latitude * latScale;
+    final bx = b.longitude * lonScale;
+    final by = b.latitude * latScale;
+    final px = p.longitude * lonScale;
+    final py = p.latitude * latScale;
+
+    final dx = bx - ax;
+    final dy = by - ay;
+    final len2 = dx * dx + dy * dy;
+    var t = len2 <= 0 ? 0.0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = t.clamp(0.0, 1.0);
+
+    final closest = LatLng(
+      (ay + t * dy) / latScale,
+      (ax + t * dx) / lonScale,
+    );
+    return (point: closest, t: t, distM: dist.as(LengthUnit.Meter, p, closest));
+  }
+
+  ({
+    int segmentIndex,
+    double alongRouteM,
+    double offRouteM,
+  }) _projectOntoRouteForward(
+    LatLng user,
+    List<LatLng> route,
+    int minSegIdx,
+  ) {
+    final start = minSegIdx.clamp(0, route.length - 2);
+    final dist = const Distance();
+    var bestDist = double.infinity;
+    var bestSeg = start;
+    var bestT = 0.0;
+
+    for (var i = start; i < route.length - 1; i++) {
+      final c = _closestPointOnSegment(user, route[i], route[i + 1]);
+      if (c.distM < bestDist) {
+        bestDist = c.distM;
+        bestSeg = i;
+        bestT = c.t;
+      }
+    }
+
+    var along = 0.0;
+    for (var i = 0; i < bestSeg; i++) {
+      along += dist.as(LengthUnit.Meter, route[i], route[i + 1]);
+    }
+    along +=
+        dist.as(LengthUnit.Meter, route[bestSeg], route[bestSeg + 1]) * bestT;
+
+    return (
+      segmentIndex: bestSeg,
+      alongRouteM: along,
+      offRouteM: bestDist.isFinite ? bestDist : 0,
+    );
+  }
+
+  void _updateAlongRouteProgress(LatLng user, Position pos) {
+    final pts = _routePoints;
+    if (pts == null || pts.length < 2) return;
+
+    final lastGps = _lastAcceptedGpsForProgress;
+    if (lastGps != null) {
+      final gpsMove =
+          const Distance().as(LengthUnit.Meter, lastGps, user);
+      if (gpsMove < _minMoveForPosition(pos)) return;
+      if (!_isGpsReadingReliable(pos, gpsMove)) return;
+    }
+
+    final proj = _projectOntoRouteForward(user, pts, _routeProgressIndex);
+    if (proj.alongRouteM <=
+        _progressAlongRouteM + _minAlongRouteAdvanceFor(pos)) {
+      return;
+    }
+
+    _lastAcceptedGpsForProgress = user;
+    _progressAlongRouteM = proj.alongRouteM;
+    _routeProgressIndex = proj.segmentIndex;
+  }
+
+  void _updateLiveRouteProgress(LatLng user, List<LatLng> pts, Position pos) {
+    final proj = _projectOntoRouteForward(user, pts, _liveRouteSegmentIndex);
+    var targetAlong = proj.alongRouteM;
+
+    if (pos.accuracy.isFinite && pos.accuracy > 25) {
+      final maxStep = math.min(pos.accuracy * 0.5, 18);
+      targetAlong = math.min(targetAlong, _liveAlongRouteM + maxStep);
+    }
+
+    if (targetAlong <= _liveAlongRouteM) return;
+
+    _liveAlongRouteM = targetAlong;
+    _liveRouteSegmentIndex = proj.segmentIndex;
+    _routeProgressIndex = proj.segmentIndex;
+  }
+
+  LatLng _interpolateLatLng(LatLng a, LatLng b, double t) {
+    return LatLng(
+      a.latitude + (b.latitude - a.latitude) * t,
+      a.longitude + (b.longitude - a.longitude) * t,
+    );
+  }
+
+  ({List<LatLng> passed, List<LatLng> remaining}) _splitRouteAtMeters(
+    List<LatLng> pts,
+    double alongM,
+  ) {
+    if (pts.length < 2 || alongM <= 0) {
+      return (passed: <LatLng>[], remaining: pts);
+    }
+    final dist = const Distance();
+    var acc = 0.0;
+    for (var i = 0; i < pts.length - 1; i++) {
+      final segLen = dist.as(LengthUnit.Meter, pts[i], pts[i + 1]);
+      if (acc + segLen >= alongM) {
+        final t = segLen > 0 ? ((alongM - acc) / segLen).clamp(0.0, 1.0) : 0.0;
+        final split = _interpolateLatLng(pts[i], pts[i + 1], t);
+        return (
+          passed: [...pts.sublist(0, i + 1), split],
+          remaining: [split, ...pts.sublist(i + 1)],
+        );
+      }
+      acc += segLen;
+    }
+    return (passed: pts, remaining: [pts.last]);
+  }
+
+  double _remainingOnRoute(List<LatLng> pts) {
+    return math.max(0, _routeLengthMeters(pts) - _liveAlongRouteM);
+  }
+
+  double _remainingForStats(List<LatLng> pts) {
+    return math.max(0, _routeLengthMeters(pts) - _progressAlongRouteM);
+  }
+
+  double _sessionTraveledMeters(List<LatLng> pts) {
+    final routeBased = math.max(
+      0.0,
+      (_navSessionTotalMeters ?? _routeLengthMeters(pts)) -
+          _remainingForStats(pts),
+    );
+    if (_sessionGpsOdometerM >= 15) return _sessionGpsOdometerM;
+    return routeBased;
   }
 
   void _resetRerouteState() {
@@ -411,7 +701,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   bool _isNearRouteFinish() {
     final pts = _routePoints;
     if (pts == null || pts.length < 2) return false;
-    return _remainingRouteMeters(pts, _routeProgressIndex) <= _finishRadiusM;
+    return _remainingOnRoute(pts) <= _finishRadiusM;
   }
 
   void _stopRouteNavigation() {
@@ -429,22 +719,37 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       return;
     }
 
-    final totalM = _navSessionTotalMeters ?? _routeLengthMeters(pts);
-    final remainingM = _remainingRouteMeters(pts, _routeProgressIndex);
-    final traveledM = math.max(0, totalM - remainingM);
-    final duration = DateTime.now().difference(startedAt);
+    _flushMovingDuration();
+    final traveledM = _sessionTraveledMeters(pts);
+    final wallDuration = DateTime.now().difference(startedAt);
+    final duration = _movingDuration >= const Duration(seconds: 30)
+        ? _movingDuration
+        : wallDuration;
 
-    final meaningfulSession = reachedFinish ||
-        duration >= _minSessionForSummary ||
-        traveledM >= _minTraveledMForSummary;
+    final qualifies = HikeQualification.qualifiesFromMeters(
+      traveledM: traveledM,
+      duration: duration,
+      reachedFinish: reachedFinish,
+    );
 
     _completionHandled = true;
     if (mounted) {
       setState(() => _routeNavActive = false);
     }
 
-    if (!meaningfulSession) {
+    if (!qualifies) {
       _resetNavSession();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Похід занадто короткий (${HikeQualification.requirementHint}). '
+              'Запис у журнал і досягнення не нараховано.',
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
 
@@ -452,8 +757,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     final title = route?.title ??
         _offlineRouteTitle ??
         'Похід ${startedAt.day}.${startedAt.month}.${startedAt.year}';
-    final distanceKm = math.max(traveledM / 1000, 0.01);
-    final durationHours = math.max(duration.inSeconds / 3600.0, 0.05);
+    final distanceKm = traveledM / 1000;
+    final durationHours = duration.inSeconds / 3600.0;
 
     final summary = HikeSessionSummary(
       routeId: widget.routeIdToFollow ?? route?.id,
@@ -484,6 +789,15 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     setState(() {
       _routeNavActive = true;
       _routeProgressIndex = 0;
+      _progressAlongRouteM = 0;
+      _liveAlongRouteM = 0;
+      _liveRouteSegmentIndex = 0;
+      _sessionGpsOdometerM = 0;
+      _lastAcceptedGpsForProgress = null;
+      _lastOdometerGpsPosition = null;
+      _movingDuration = Duration.zero;
+      _movingSegmentStart = null;
+      _lastMovementAt = null;
       _navSessionStartedAt = DateTime.now();
       _navSessionTotalMeters = _routeLengthMeters(pts);
       _completionHandled = false;
@@ -497,10 +811,21 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       );
       if (!mounted || !_routeNavActive) return;
       final user = LatLng(pos.latitude, pos.longitude);
-      final idx = _nearestForwardRouteIndex(user, pts, 0);
-      setState(() => _routeProgressIndex = idx);
-      _warnIfGpsFarFromRoute(user, pts, idx);
-      _mapController.move(_mapCenterForFollow(user, pts, idx), _followZoom);
+      final proj = _projectOntoRouteForward(user, pts, 0);
+      setState(() {
+        _routeProgressIndex = proj.segmentIndex;
+        _liveRouteSegmentIndex = proj.segmentIndex;
+        _progressAlongRouteM = proj.alongRouteM;
+        _liveAlongRouteM = proj.alongRouteM;
+        _lastAcceptedGpsForProgress = user;
+        _lastOdometerGpsPosition = user;
+      });
+      _maybeWarnPoorGps(pos);
+      _warnIfGpsFarFromRoute(user, pts, proj.segmentIndex);
+      _mapController.move(
+        _mapCenterForFollow(user, pts, proj.segmentIndex),
+        _followZoom,
+      );
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -513,35 +838,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       }
       setState(() => _routeNavActive = false);
     }
-  }
-
-  /// Найближча вершина полілінії не раніше за [minIdx] (рух уперед по маршруту).
-  int _nearestForwardRouteIndex(
-    LatLng user,
-    List<LatLng> route,
-    int minIdx,
-  ) {
-    final dist = const Distance();
-    var bestIdx = math.min(math.max(0, minIdx), route.length - 1);
-    var bestD = dist.as(LengthUnit.Meter, user, route[bestIdx]);
-    for (var i = minIdx; i < route.length; i++) {
-      final d = dist.as(LengthUnit.Meter, user, route[i]);
-      if (d < bestD) {
-        bestD = d;
-        bestIdx = i;
-      }
-    }
-    return bestIdx;
-  }
-
-  double _remainingRouteMeters(List<LatLng> pts, int fromIndex) {
-    if (pts.length < 2 || fromIndex >= pts.length - 1) return 0;
-    final dist = const Distance();
-    var sum = 0.0;
-    for (var i = fromIndex; i < pts.length - 1; i++) {
-      sum += dist.as(LengthUnit.Meter, pts[i], pts[i + 1]);
-    }
-    return sum;
   }
 
   String _remainingRouteLabel() {
@@ -558,7 +854,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         return 'Ви поза маршрутом (~${offM.round()} м) — оновлюємо шлях';
       }
     }
-    final m = _remainingRouteMeters(pts, _routeProgressIndex);
+    final m = _remainingOnRoute(pts);
     if (m >= 1000) return '~ ${(m / 1000).toStringAsFixed(1)} км залишилось';
     if (m <= 0) return 'Фініш поруч';
     return '~ ${m.round()} м залишилось';
@@ -566,7 +862,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
   LatLng? _lastKnownUserPosition;
 
-  /// Відстань від точки до найближчого сегмента маршруту попереду.
   double _distanceToRouteAhead(
     LatLng? user,
     List<LatLng> route,
@@ -585,32 +880,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   double _pointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
-    final dist = const Distance();
-    final total = dist.as(LengthUnit.Meter, a, b);
-    if (total < 1) return dist.as(LengthUnit.Meter, p, a);
-
-    const latScale = 111320.0;
-    final lonScale =
-        111320.0 * math.cos((a.latitude + b.latitude) * math.pi / 360);
-
-    final ax = a.longitude * lonScale;
-    final ay = a.latitude * latScale;
-    final bx = b.longitude * lonScale;
-    final by = b.latitude * latScale;
-    final px = p.longitude * lonScale;
-    final py = p.latitude * latScale;
-
-    final dx = bx - ax;
-    final dy = by - ay;
-    final len2 = dx * dx + dy * dy;
-    var t = len2 <= 0 ? 0.0 : ((px - ax) * dx + (py - ay) * dy) / len2;
-    t = t.clamp(0.0, 1.0);
-
-    final closest = LatLng(
-      (ay + t * dy) / latScale,
-      (ax + t * dx) / lonScale,
-    );
-    return dist.as(LengthUnit.Meter, p, closest);
+    return _closestPointOnSegment(p, a, b).distM;
   }
 
   int _nearestIndexOnRoute(LatLng point, List<LatLng> route) {
@@ -691,12 +961,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     if (mounted) setState(() {});
 
     try {
-      final traveledM = math.max(
-        0,
-        (_navSessionTotalMeters ?? _routeLengthMeters(pts)) -
-            _remainingRouteMeters(pts, _routeProgressIndex),
-      );
-
       final newRoute = await _routingRepo.fetchHikingRouteThrough([
         user,
         ...targets,
@@ -704,11 +968,16 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
       if (!mounted || !_routeNavActive || newRoute.length < 2) return;
 
+      final traveledBeforeReroute = _sessionTraveledMeters(pts);
       setState(() {
         _routePoints = newRoute;
         _routeProgressIndex = 0;
+        _liveRouteSegmentIndex = 0;
+        _progressAlongRouteM = 0;
+        _liveAlongRouteM = 0;
+        _lastAcceptedGpsForProgress = null;
         _navSessionTotalMeters =
-            traveledM + _routeLengthMeters(newRoute);
+            traveledBeforeReroute + _routeLengthMeters(newRoute);
         _lastRerouteAt = now;
       });
 
@@ -736,12 +1005,11 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
-  /// Пройдений шлях (сірий) і залишок (зелений) під час навігації.
   List<Polyline> _routePolylinesForNavigation() {
     final pts = _routePoints!;
-    final idx = _routeProgressIndex.clamp(0, pts.length - 1);
-    final passed = pts.sublist(0, idx + 1);
-    final remaining = pts.sublist(idx);
+    final split = _splitRouteAtMeters(pts, _liveAlongRouteM);
+    final passed = split.passed;
+    final remaining = split.remaining;
 
     final list = <Polyline>[];
     if (passed.length >= 2) {
@@ -780,7 +1048,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     return list;
   }
 
-  /// Доки FlutterMap не віддав реальний розмір, visibleBounds некоректні.
   bool _isMapCameraReady(MapCamera camera) {
     final s = camera.nonRotatedSize;
     return s.x > 0 && s.y > 0;
@@ -814,7 +1081,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       return;
     }
 
-    // Трохи нижчий поріг — POI з’являються раніше при віддаленні.
     if (camera.zoom < 10) {
       setState(() {
         _pois = [];
@@ -865,7 +1131,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
   }
 
-  /// Після увімкнення шару карта інколи ще без розміру — чекаємо на layout.
   Future<void> _reloadPoisAfterLayoutReady() async {
     var warnedLowZoom = false;
     for (var i = 0; i < 15; i++) {
@@ -892,6 +1157,28 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         await Future<void>.delayed(const Duration(milliseconds: 64));
       }
     }
+  }
+
+  void _toggleMapTileStyle() {
+    if (_offlineTileProvider != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Рельєфна карта недоступна разом із завантаженою офлайн-картою маршруту.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    setState(() => _mapTileStyle = _mapTileStyle.toggled);
+  }
+
+  double _tileLayerMaxZoom() {
+    if (_offlineOnlyNav || _offlineTileProvider != null) {
+      return OfflineMapService.maxZoom.toDouble();
+    }
+    return onlineMapTileMaxZoom(_mapTileStyle);
   }
 
   void _togglePoiLayer() {
@@ -1197,13 +1484,15 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
         if (!_routeNavActive || _routePoints == null) return;
         final pts = _routePoints!;
-        final newIdx =
-            _nearestForwardRouteIndex(user, pts, _routeProgressIndex);
+        _updateLiveRouteProgress(user, pts, pos);
+        _updateGpsOdometer(user, pos);
+        _updateAlongRouteProgress(user, pos);
+        final followIdx = _liveRouteSegmentIndex;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_routeNavActive) return;
-          setState(() => _routeProgressIndex = newIdx);
+          setState(() {});
           _mapController.move(
-            _mapCenterForFollow(user, pts, newIdx),
+            _mapCenterForFollow(user, pts, followIdx),
             _followZoom,
           );
           _checkAutoRouteCompletion();
@@ -1259,16 +1548,21 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: _mapTileStyle.urlTemplate,
                 userAgentPackageName: 'com.example.hiking_app',
                 tileProvider: _offlineTileProvider,
                 minZoom: _offlineOnlyNav
                     ? OfflineMapService.minZoom.toDouble()
                     : 1,
-                maxZoom: _offlineOnlyNav
-                    ? OfflineMapService.maxZoom.toDouble()
-                    : 22,
+                maxZoom: _tileLayerMaxZoom(),
               ),
+              if (_mapTileStyle == MapTileStyle.terrain &&
+                  onlineFeatures &&
+                  _offlineTileProvider == null)
+                const SimpleAttributionWidget(
+                  source: Text(openTopoMapAttribution),
+                  alignment: Alignment.bottomLeft,
+                ),
               if (_routePoints != null && _routePoints!.length >= 2)
                 PolylineLayer(
                   polylines: _routeNavActive
@@ -1446,7 +1740,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                                     fontSize: 15,
                                   ),
                                 ),
-                                if (_routeNavActive)
+                                if (_routeNavActive) ...[
                                   Padding(
                                     padding: const EdgeInsets.only(top: 4),
                                     child: Text(
@@ -1457,6 +1751,31 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                                       ),
                                     ),
                                   ),
+                                  locationAsync.maybeWhen(
+                                    data: (pos) {
+                                      if (pos == null ||
+                                          !pos.accuracy.isFinite ||
+                                          pos.accuracy <= 25) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Text(
+                                          kDebugMode
+                                              ? 'GPS ±${pos.accuracy.round()} м — '
+                                                  'емулятор часто дає похибку'
+                                              : 'GPS ±${pos.accuracy.round()} м — '
+                                                  'очікуйте на відкритій місцевості',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.orange.shade800,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    orElse: () => const SizedBox.shrink(),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -1521,51 +1840,15 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 ),
               ),
             ),
-          Positioned(
-            top: 0,
-            left: 0,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8, left: 8),
-                child: Material(
-                  elevation: 2,
-                  borderRadius: BorderRadius.circular(12),
-                  color: Colors.white,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        onPressed: () => _zoomBy(1),
-                        icon: const Icon(Icons.add),
-                        color: const Color(0xFF2E7D32),
-                        tooltip: 'Збільшити масштаб',
-                        padding: const EdgeInsets.all(10),
-                        constraints: const BoxConstraints(
-                          minWidth: 44,
-                          minHeight: 40,
-                        ),
-                      ),
-                      Divider(
-                        height: 1,
-                        thickness: 1,
-                        color: Colors.grey.shade200,
-                      ),
-                      IconButton(
-                        onPressed: () => _zoomBy(-1),
-                        icon: const Icon(Icons.remove),
-                        color: const Color(0xFF2E7D32),
-                        tooltip: 'Зменшити масштаб',
-                        padding: const EdgeInsets.all(10),
-                        constraints: const BoxConstraints(
-                          minWidth: 44,
-                          minHeight: 40,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          MapControlsOverlay(
+            mapController: _mapController,
+            style: _mapTileStyle,
+            onToggleStyle: _toggleMapTileStyle,
+            showStyleToggle:
+                onlineFeatures && _offlineTileProvider == null,
+            maxZoomCap: _offlineOnlyNav
+                ? OfflineMapService.maxZoom.toDouble()
+                : null,
           ),
           Positioned(
             top: 0,
@@ -1661,22 +1944,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     });
   }
 
-  void _zoomBy(double delta) {
-    try {
-      final cam = _mapController.camera;
-      final minZ = cam.minZoom ?? 1;
-      var maxZ = cam.maxZoom ?? 22;
-      if (_offlineOnlyNav) {
-        maxZ = math.min(maxZ, OfflineMapService.maxZoom.toDouble());
-      }
-      final z = (cam.zoom + delta).clamp(minZ, maxZ);
-      if ((z - cam.zoom).abs() < 0.01) return;
-      _mapController.move(cam.center, z);
-    } catch (_) {}
-  }
 }
 
-/// Маркер поточної позиції: радіальний градієнт від центру до краю.
 class _UserLocationDot extends StatelessWidget {
   const _UserLocationDot();
 

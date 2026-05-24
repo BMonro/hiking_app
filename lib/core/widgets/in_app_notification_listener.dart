@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../notifications/notification_ui.dart';
 import '../notifications/notifications_provider.dart';
 
-/// Глобальні SnackBar-сповіщення (досягнення, походи, чат).
 class InAppNotificationListener extends ConsumerWidget {
   const InAppNotificationListener({super.key, required this.child});
 
@@ -32,8 +31,11 @@ class InAppNotificationListener extends ConsumerWidget {
         SnackBar(
           behavior: SnackBarBehavior.floating,
           backgroundColor: style.snackBg,
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          elevation: 4,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: style.accent.withValues(alpha: 0.28)),
+          ),
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           duration: const Duration(seconds: 6),
           content: Row(
@@ -43,7 +45,7 @@ class InAppNotificationListener extends ConsumerWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: style.iconBg,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(style.icon, color: style.accent, size: 24),

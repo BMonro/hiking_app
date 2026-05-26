@@ -1,5 +1,4 @@
--- VIEW profile_stats для клієнта (журнал + RLS на journal_entries).
--- Виконати в Supabase SQL Editor, якщо статистика в застосунку порожня.
+
 
 DROP VIEW IF EXISTS public.profile_stats;
 

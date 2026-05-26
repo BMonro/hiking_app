@@ -1,11 +1,8 @@
--- Сповіщення: політика «Own notifications» (auth.uid() = user_id) блокує INSERT,
--- коли рядок призначений іншому користувачу (організатор / заявник).
--- Виконайте в Supabase → SQL Editor.
+
 
 DROP POLICY IF EXISTS "notifications_insert_trip_request_to_organizer" ON notifications;
 DROP POLICY IF EXISTS "notifications_insert_trip_decision_to_applicant" ON notifications;
 
--- Заявник повідомляє організатора
 CREATE POLICY "notifications_insert_trip_request_to_organizer"
   ON notifications
   FOR INSERT
@@ -21,7 +18,6 @@ CREATE POLICY "notifications_insert_trip_request_to_organizer"
     )
   );
 
--- Організатор повідомляє заявника про рішення
 CREATE POLICY "notifications_insert_trip_decision_to_applicant"
   ON notifications
   FOR INSERT

@@ -1,5 +1,3 @@
--- Синхронізація profiles.experience_count з кількістю записів у журналі.
--- Виконати в Supabase → SQL Editor.
 
 CREATE OR REPLACE FUNCTION public.sync_profile_experience_count(p_user_id UUID)
 RETURNS void
@@ -52,9 +50,3 @@ CREATE TRIGGER journal_sync_experience_count
   FOR EACH ROW
   EXECUTE FUNCTION public.trg_sync_experience_after_journal();
 
--- Одноразово для всіх користувачів:
--- DO $$ DECLARE r RECORD; BEGIN
---   FOR r IN SELECT id FROM auth.users LOOP
---     PERFORM public.sync_profile_experience_count(r.id);
---   END LOOP;
--- END $$;

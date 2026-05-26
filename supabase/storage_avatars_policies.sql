@@ -1,5 +1,3 @@
--- Аватари: бакет + RLS (виконати в Supabase SQL Editor).
--- Dashboard → Storage: переконайтесь, що бакет public, якщо використовуєте getPublicUrl.
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
@@ -24,7 +22,6 @@ CREATE POLICY "avatars_public_read"
   TO public
   USING (bucket_id = 'avatars');
 
--- Файл у застосунку: {auth.uid()}-avatar.jpg
 CREATE POLICY "avatars_authenticated_insert_own"
   ON storage.objects FOR INSERT
   TO authenticated

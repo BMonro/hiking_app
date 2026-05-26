@@ -41,8 +41,7 @@ final weatherBundleProvider =
   }
 
   final current = await repo.getWeatherByCity(place.label);
-  final forecast =
-      await repo.get5DayForecastByCoords(current.lat, current.lon);
+  final forecast = await repo.get5DayForecastByCoords(current.lat, current.lon);
   return _WeatherBundle(current: current, forecast: forecast, place: place);
 });
 
@@ -146,9 +145,11 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen> {
               Expanded(
                 child: Consumer(
                   builder: (context, ref, _) {
-                    final bundleAsync = ref.watch(weatherBundleProvider(selected));
+                    final bundleAsync =
+                        ref.watch(weatherBundleProvider(selected));
                     return bundleAsync.when(
-                      loading: () => const Center(child: CircularProgressIndicator()),
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
                       error: (e, _) => Center(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -190,8 +191,9 @@ class _WeatherLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = bundle.current;
     final kmh = (w.windSpeed * 3.6).round();
-    final visibilityKm =
-        w.visibilityMeters == null ? null : (w.visibilityMeters! / 1000).round();
+    final visibilityKm = w.visibilityMeters == null
+        ? null
+        : (w.visibilityMeters! / 1000).round();
     final pressure = w.pressure;
 
     return SingleChildScrollView(
@@ -311,8 +313,7 @@ class _WeatherLayout extends StatelessWidget {
             child: Column(
               children: [
                 for (var i = 0; i < bundle.forecast.length; i++) ...[
-                  if (i > 0)
-                    const Divider(height: 1, color: Color(0xFFE3E7E2)),
+                  if (i > 0) const Divider(height: 1, color: Color(0xFFE3E7E2)),
                   _ForecastRow(
                     day: _dayLabel(bundle.forecast[i].date, i),
                     dayTemp: bundle.forecast[i].dayTempStr,
@@ -324,7 +325,6 @@ class _WeatherLayout extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          _WarningBox(text: _warningText(w)),
         ],
       ),
     );
@@ -365,20 +365,6 @@ class _WeatherLayout extends StatelessWidget {
       'Нд',
     ];
     return '${weekdays[date.weekday]}, ${date.day} ${months[date.month]}';
-  }
-
-  static String _warningText(WeatherModel w) {
-    final kmh = w.windSpeed * 3.6;
-    if (kmh >= 35) {
-      return 'Попередження\nПосилення вітру до ${kmh.round()}км/год очікується протягом дня. Рекомендується зберегти підйом до 12:00.';
-    }
-    if (w.temperature <= 0) {
-      return 'Попередження\nНизька температура. Бережіть руки, стежте за ожеледицею та беріть запас теплих речей.';
-    }
-    if (w.humidity >= 90) {
-      return 'Попередження\nВисока вологість — можливий туман та опади. Візьміть дощовик і тримайтеся позначеного маршруту.';
-    }
-    return 'Попередження\nСлідкуйте за змінами погоди в горах. Перевіряйте прогноз перед виходом на маршрут.';
   }
 }
 
@@ -444,8 +430,8 @@ class _ForecastRow extends StatelessWidget {
             iconUrl,
             width: 26,
             height: 26,
-            errorBuilder: (_, __, ___) => Icon(Icons.cloud_outlined,
-                size: 22, color: Colors.grey[400]),
+            errorBuilder: (_, __, ___) =>
+                Icon(Icons.cloud_outlined, size: 22, color: Colors.grey[400]),
           ),
           const SizedBox(width: 10),
           Text(

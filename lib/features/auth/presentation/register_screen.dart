@@ -99,9 +99,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           .eq('id', user.id)
           .maybeSingle();
       if (profile != null && profile['age'] != null) return;
-    } catch (_) {
-
-    }
+    } catch (_) {}
 
     if (!mounted) return;
     context.go('/register?oauth=1');
@@ -185,8 +183,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required String password,
     required String confirm,
   }) {
-    final firstNameError =
-        FormValidators.personName(first, fieldLabel: 'імʼя');
+    final firstNameError = FormValidators.personName(first, fieldLabel: 'імʼя');
     final lastNameError =
         FormValidators.personName(last, fieldLabel: 'прізвище');
     final emailError = FormValidators.email(email);
@@ -217,9 +214,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         title: const Text('Підтвердіть email'),
         content: Text(
           'На адресу $email надіслано лист.\n\n'
-          'Відкрийте посилання на цьому телефоні — має запуститися застосунок Hikora.\n\n'
-          'Якщо лист відкривається лише в браузері без переходу в застосунок, '
-          'перевірте Redirect URLs і Site URL у Supabase Dashboard → Authentication.',
+          'Будь ласка, відкрийте його та натисніть на посилання для підтвердження реєстрації.',
         ),
         actions: [
           TextButton(
@@ -342,8 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final s = e.toString().toLowerCase();
     if (s.contains('row-level security') ||
         s.contains('storageexception') && s.contains('403')) {
-      return 'Немає прав на завантаження файлу. Увімкніть політики для бакета avatars у Supabase '
-          '(файл supabase/storage_avatars_policies.sql у проєкті).';
+      return 'Помилка збереження: не вдалося завантажити фото. Профіль збережено без аватара.';
     }
     return 'Помилка збереження: $e';
   }
@@ -428,7 +422,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    final ageError = FormValidators.age(_ageController.text, requiredField: true);
+    final ageError =
+        FormValidators.age(_ageController.text, requiredField: true);
     final experienceError =
         FormValidators.experienceText(_experienceController.text);
     if (ageError != null || experienceError != null) {
@@ -599,7 +594,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.next,
             onChanged: (_) {
-              if (_firstNameError != null) setState(() => _firstNameError = null);
+              if (_firstNameError != null)
+                setState(() => _firstNameError = null);
             },
             decoration: _decoration('Імʼя', Icons.person_outline),
           ),
@@ -689,8 +685,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
           OutlinedButton.icon(
-            onPressed:
-                _isLoading || _isGoogleLoading ? null : _submitGoogle,
+            onPressed: _isLoading || _isGoogleLoading ? null : _submitGoogle,
             icon: _isGoogleLoading
                 ? const SizedBox(
                     width: 18,

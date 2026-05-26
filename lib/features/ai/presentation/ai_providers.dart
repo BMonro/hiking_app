@@ -106,8 +106,7 @@ class AiChatNotifier extends StateNotifier<List<ChatMessage>> {
         ...state,
         ChatMessage(
           role: 'assistant',
-          content:
-              'ШІ-чат ще не налаштований на сервері. Додайте OPENAI_API_KEY у Supabase (Edge Functions → Secrets) і перезапустіть застосунок. Рекомендації маршрутів працюють за профілем.',
+          content: 'Чат-бот наразі недоступний',
           sentAt: DateTime.now(),
         ),
       ];

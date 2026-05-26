@@ -70,7 +70,6 @@ LocationSettings _navigationLocationSettings() {
 }
 
 class NavigationScreen extends ConsumerStatefulWidget {
-
   final String? routeIdToFollow;
 
   final bool forceOfflineNavigation;
@@ -154,9 +153,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   bool _gpsQualityWarned = false;
 
   double get _followZoom =>
-      _offlineOnlyNav
-          ? OfflineMapService.maxZoom.toDouble()
-          : _navFollowZoom;
+      _offlineOnlyNav ? OfflineMapService.maxZoom.toDouble() : _navFollowZoom;
 
   LatLng _mapCenterForFollow(LatLng user, List<LatLng> route, int progressIdx) {
     if (!_offlineOnlyNav) return user;
@@ -164,7 +161,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     return route[idx];
   }
 
-  void _warnIfGpsFarFromRoute(LatLng user, List<LatLng> route, int progressIdx) {
+  void _warnIfGpsFarFromRoute(
+      LatLng user, List<LatLng> route, int progressIdx) {
     if (!_offlineOnlyNav || !mounted) return;
     const dist = Distance();
     final onRoute = route[progressIdx.clamp(0, route.length - 1)];
@@ -174,8 +172,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         SnackBar(
           content: Text(
             'GPS далеко від маршруту (~${(meters / 1000).toStringAsFixed(1)} км). '
-            'Офлайн-карта показує лише зону маршруту. '
-            'У емуляторі встановіть координати біля треку (Extended Controls → Location).',
+            'Офлайн-карта показує лише зону маршруту. ',
           ),
           duration: const Duration(seconds: 6),
         ),
@@ -263,7 +260,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Немає лінії маршруту (geojson або точок). Додайте маршрут у редакторі.',
+              'Немає лінії маршруту. Додайте маршрут у редакторі.',
             ),
           ),
         );
@@ -302,16 +299,14 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       final hasOfflinePackage = await offlineService.hasOfflineMap(routeId);
       final offlinePath = await offlineService.loadOfflinePath(routeId);
 
-      if (!hasOfflinePackage ||
-          offlinePath == null ||
-          !offlinePath.isValid) {
+      if (!hasOfflinePackage || offlinePath == null || !offlinePath.isValid) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               offlinePath != null
                   ? 'Збережений шлях пошкоджено. Завантажте офлайн-пакет знову.'
-                  : 'Офлайн-пакет не знайдено. Завантажте його з інтернету.',
+                  : 'Офлайн-пакет не знайдено.',
             ),
           ),
         );
@@ -457,7 +452,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   }
 
   bool _isDeviceLikelyMoving(Position pos) {
-
     if (pos.speed >= 0 && pos.speed < 0.5) return false;
     return true;
   }
@@ -496,9 +490,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Неточний GPS (±${pos.accuracy.round()} м). '
-          'На емуляторі відстань і час можуть «плисти» без руху — '
-          'перевірте на реальному телефоні.',
+          'Неточний GPS (±${pos.accuracy.round()} м). ',
         ),
         duration: const Duration(seconds: 6),
       ),
@@ -600,8 +592,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
     final lastGps = _lastAcceptedGpsForProgress;
     if (lastGps != null) {
-      final gpsMove =
-          const Distance().as(LengthUnit.Meter, lastGps, user);
+      final gpsMove = const Distance().as(LengthUnit.Meter, lastGps, user);
       if (gpsMove < _minMoveForPosition(pos)) return;
       if (!_isGpsReadingReliable(pos, gpsMove)) return;
     }
@@ -831,7 +822,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Увімкніть GPS і дозвольте доступ, щоб почати навігацію.',
+              'Увімкніть GPS і надайте доступ, щоб почати навігацію.',
             ),
           ),
         );
@@ -940,8 +931,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     }
 
     _offRouteStreak++;
-    final shouldReroute = offM >= _offRouteRerouteImmediatelyM ||
-        _offRouteStreak >= 2;
+    final shouldReroute =
+        offM >= _offRouteRerouteImmediatelyM || _offRouteStreak >= 2;
     if (!shouldReroute) return;
 
     var targets = _remainingNavWaypoints(pts);
@@ -1247,7 +1238,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
 
   String _routeErrorMessage(Object e) {
     final s = e.toString();
-    return 'Не вдалося побудувати маршрут (GraphHopper і OSRM). Деталі: $s';
+    return 'Не вдалося побудувати маршрут.';
   }
 
   void _fitRouteOnMap() {
@@ -1287,7 +1278,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Не вдалося отримати місцезнаходження. Увімкніть GPS і дозвольте доступ.',
+            'Не вдалося отримати місцезнаходження. Увімкніть GPS і надайтедоступ.',
           ),
         ),
       );
@@ -1551,9 +1542,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 urlTemplate: _mapTileStyle.urlTemplate,
                 userAgentPackageName: 'com.example.hiking_app',
                 tileProvider: _offlineTileProvider,
-                minZoom: _offlineOnlyNav
-                    ? OfflineMapService.minZoom.toDouble()
-                    : 1,
+                minZoom:
+                    _offlineOnlyNav ? OfflineMapService.minZoom.toDouble() : 1,
                 maxZoom: _tileLayerMaxZoom(),
               ),
               if (_mapTileStyle == MapTileStyle.terrain &&
@@ -1718,9 +1708,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Icon(
-                              _routeNavActive
-                                  ? Icons.navigation
-                                  : Icons.route,
+                              _routeNavActive ? Icons.navigation : Icons.route,
                               color: const Color(0xFF2E7D32),
                               size: 22,
                             ),
@@ -1844,11 +1832,9 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
             mapController: _mapController,
             style: _mapTileStyle,
             onToggleStyle: _toggleMapTileStyle,
-            showStyleToggle:
-                onlineFeatures && _offlineTileProvider == null,
-            maxZoomCap: _offlineOnlyNav
-                ? OfflineMapService.maxZoom.toDouble()
-                : null,
+            showStyleToggle: onlineFeatures && _offlineTileProvider == null,
+            maxZoomCap:
+                _offlineOnlyNav ? OfflineMapService.maxZoom.toDouble() : null,
           ),
           Positioned(
             top: 0,
@@ -1943,7 +1929,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
       }
     });
   }
-
 }
 
 class _UserLocationDot extends StatelessWidget {
